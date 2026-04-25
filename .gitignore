@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+app/data/books/*
+app/data/covers/*
+!app/data/books/.gitkeep
+!app/data/covers/.gitkeep

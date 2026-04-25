@@ -1,0 +1,7 @@
+fastapi==0.115.0
+uvicorn==0.30.6
+python-multipart==0.0.9
+ebooklib==0.18
+pypdf==5.0.1
+jinja2==3.1.4
+beautifulsoup4==4.12.3
