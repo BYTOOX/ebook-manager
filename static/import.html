@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Import eBooks</title>
+    <link rel="stylesheet" href="/import.css" />
+  </head>
+  <body>
+    <main class="container">
+      <h1>Import</h1>
+      <p>Assistant guidé pour importer des EPUB/PDF et restaurer la progression.</p>
+
+      <section class="step active" id="step-1">
+        <h2>1) Sélection de la source</h2>
+        <label>
+          Type de source
+          <select id="source-type">
+            <option value="directory">Dossier</option>
+            <option value="zip">ZIP</option>
+          </select>
+        </label>
+        <label>
+          Chemin local
+          <input id="source-path" placeholder="/Users/alex/Books ou /tmp/archive.zip" />
+        </label>
+        <button id="preview-btn">Générer un aperçu</button>
+      </section>
+
+      <section class="step" id="step-2">
+        <h2>2) Aperçu</h2>
+        <p id="preview-meta">Aucun aperçu pour le moment.</p>
+        <pre id="preview-output"></pre>
+        <button id="import-btn" disabled>Valider l'import</button>
+      </section>
+
+      <section class="step" id="step-3">
+        <h2>3) Import bookmarks / progress (JSON)</h2>
+        <textarea id="progress-json" rows="12" placeholder='{"formatVersion":1,"books":[]}'></textarea>
+        <button id="progress-btn">Importer la progression</button>
+        <p id="progress-result"></p>
+      </section>
+
+      <section class="step" id="step-4">
+        <h2>4) Résultat</h2>
+        <pre id="result-output">En attente d'action…</pre>
+      </section>
+    </main>
+
+    <script src="/import.js" defer></script>
+  </body>
+</html>

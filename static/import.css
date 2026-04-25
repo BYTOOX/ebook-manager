@@ -1,0 +1,65 @@
+:root {
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  color: #1c2430;
+  background: #f7f9fc;
+}
+
+body {
+  margin: 0;
+}
+
+.container {
+  max-width: 900px;
+  margin: 2rem auto;
+  padding: 1rem;
+}
+
+.step {
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  padding: 1rem;
+  margin-bottom: 1rem;
+  border-left: 4px solid #d3dce8;
+}
+
+.step.active {
+  border-left-color: #3c79ff;
+}
+
+label {
+  display: block;
+  margin: 0.6rem 0;
+}
+
+input,
+select,
+textarea,
+button {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 0.35rem;
+  padding: 0.6rem;
+  font-size: 0.95rem;
+}
+
+button {
+  border: 0;
+  background: #3c79ff;
+  color: #fff;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+button:disabled {
+  background: #b8c7eb;
+  cursor: not-allowed;
+}
+
+pre {
+  background: #111827;
+  color: #ecf3ff;
+  padding: 0.8rem;
+  border-radius: 8px;
+  overflow: auto;
+}
