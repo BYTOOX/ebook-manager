@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ebook Reader Sync Demo</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Ebook Reader Sync Demo</h1>
+      <p>Simulation d'une position de lecture synchronisée avec sauvegarde automatique.</p>
+
+      <section class="panel">
+        <label for="book-id">Book ID</label>
+        <input id="book-id" value="book-001" />
+
+        <label for="position">Position</label>
+        <input id="position" type="range" min="0" max="100" value="0" />
+        <output id="position-value">0%</output>
+
+        <div class="buttons">
+          <button id="resume-btn">Reprendre à la dernière position</button>
+          <button id="save-now-btn">Sauvegarder maintenant</button>
+        </div>
+
+        <p id="status">Statut: prêt.</p>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
