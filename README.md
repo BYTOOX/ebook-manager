@@ -1,17 +1,34 @@
 # Aurelia
 
-Aurelia is a self-hosted, mobile-first EPUB library and PWA. V1 is intentionally narrow:
-EPUB only, PostgreSQL as the server database, IndexedDB for offline client state, and a
-premium dark black/gold interface.
+Aurelia is a self-hosted, mobile-first EPUB library and reader PWA.
 
-## Repository State
+V1 is intentionally focused: EPUB only, one local user, PostgreSQL on the server,
+IndexedDB for offline state, and a premium dark black/gold interface.
 
-The repository started with product and architecture specifications only. Phase 1 adds the
-application foundation:
+## Current Capabilities
 
-- `backend/`: FastAPI, SQLAlchemy 2.x, Alembic, mono-user auth, initial PostgreSQL schema.
-- `frontend/`: React + Vite + TypeScript, PWA shell, dark/gold UI, IndexedDB stores.
-- `compose.yaml`: Podman Compose / Docker Compose compatible local stack.
+- Local authentication with an HTTP-only session cookie.
+- EPUB upload and recursive incoming-folder scan.
+- Exact duplicate detection by file hash.
+- EPUB metadata and cover extraction.
+- Library, search, home resume, book detail, collections, series, tags, ratings, favorites, and reading statuses.
+- Integrated EPUB reader with paged mode, scroll mode, table of contents, bookmarks, reading settings, CFI resume, and progress tracking.
+- Offline download with EPUB and cover stored in IndexedDB.
+- Offline reader path that prefers the local EPUB blob when available.
+- Local progress/bookmark queue with automatic sync retry when the network returns.
+- Newest-update-wins progress conflict policy.
+- Metadata enrichment via Open Library and Google Books with field-by-field user approval.
+- Provider cover replacement stored locally by the backend.
+- Advanced maintenance page for API health, import jobs, incoming scan, IndexedDB/offline state, sync state, and offline cache cleanup.
+
+## Out Of Scope For V1
+
+- PDF, MOBI, AZW3, CBZ, audiobooks.
+- DRM handling or DRM bypass.
+- Multi-user accounts.
+- Native mobile app.
+- AI recommendations or generated metadata.
+- OPDS/WebDAV and ebook-device integrations.
 
 ## Stack
 
@@ -23,18 +40,18 @@ Backend:
 - Alembic
 - PostgreSQL
 - Pydantic v2
-- HTTP-only session cookie backed by a signed token
 
 Frontend:
 
 - React 18
-- TypeScript strict
 - Vite
+- TypeScript
 - TanStack Query
 - Zustand
 - Dexie / IndexedDB
+- epub.js
 - vite-plugin-pwa
-- lucide-react icons
+- lucide-react
 
 ## Local Development
 
@@ -47,14 +64,54 @@ cp .env.example .env
 Start the full stack:
 
 ```bash
+docker compose up --build
+```
+
+Podman Compose also works:
+
+```bash
 podman compose up --build
 ```
 
-Docker Compose also works:
+URLs:
+
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:8000/api/v1
+- OpenAPI: http://localhost:8000/docs
+
+## Test Login
+
+For the current development database:
+
+- username: `admin`
+- password: `PasswordAdmin123`
+
+For a fresh database, use the setup screen in the PWA or call:
 
 ```bash
-docker compose up --build
+curl -X POST http://localhost:8000/api/v1/auth/setup ^
+  -H "Content-Type: application/json" ^
+  -d "{\"username\":\"admin\",\"password\":\"very-secure-password\",\"display_name\":\"Aurelia\"}"
 ```
+
+If `FIRST_USER_SETUP_TOKEN` is set, include `setup_token` in the JSON body.
+
+## Bulk Import
+
+With Compose, place EPUB files under `library-import/`.
+
+The backend mounts this folder read-only at `/data/library/incoming`, and the scan action imports every `.epub` file recursively.
+
+Example:
+
+```txt
+library-import/
+  Series Name/
+    Tome1.epub
+    Tome2.epub
+```
+
+## Development Commands
 
 Backend only:
 
@@ -75,71 +132,23 @@ npm install
 npm run dev
 ```
 
-URLs:
-
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:8000/api/v1
-- OpenAPI: http://localhost:8000/docs
-
-## First Login
-
-Use the setup screen in the PWA, or call:
+Tests and checks:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/auth/setup ^
-  -H "Content-Type: application/json" ^
-  -d "{\"username\":\"admin\",\"password\":\"very-secure-password\",\"display_name\":\"Aurelia\"}"
+cd backend
+.venv\Scripts\python.exe -m pytest
+
+cd ../frontend
+npm.cmd run build
 ```
 
-If `FIRST_USER_SETUP_TOKEN` is set, include `setup_token` in the JSON body.
+## Persistent Data
 
-## Phase 1 Scope
+Back up these items:
 
-Implemented now:
+- PostgreSQL volume `postgres_data`.
+- Library volume `library_data`.
+- Project `.env` file.
+- Optional import staging folder `library-import/` if you keep source EPUBs there.
 
-- API health endpoint.
-- First-user setup, login, logout, `me`, password change.
-- Initial schema for users, books, authors, series, tags, collections, reading progress,
-  bookmarks, reading settings, import jobs, metadata results, and sync events.
-- Alembic initial migration.
-- Minimal books listing/detail API for the frontend shell.
-- Minimal sync event intake endpoint.
-- PWA shell, mobile navigation, login/setup UI, Home, Library, Search, Collections,
-  Settings, Import placeholder, Book detail, Reader placeholder.
-- IndexedDB stores required by the offline-first architecture.
-
-## Phase 2 Scope
-
-Implemented now:
-
-- EPUB upload at `POST /api/v1/books/upload`.
-- EPUB-only validation and configurable upload size limit with `MAX_UPLOAD_SIZE_MB`.
-- SHA-256 file hash and exact duplicate warning.
-- EPUB metadata extraction for title, authors, language, ISBN, publisher, date, description.
-- Cover extraction normalized to `/data/library/books/<book_id>/cover.jpg`.
-- Original EPUB storage at `/data/library/books/<book_id>/original.epub`.
-- Metadata snapshot at `/data/library/books/<book_id>/metadata.json`.
-- `GET /api/v1/books/{book_id}/file` and `/cover`.
-- Import jobs listing.
-- Recursive scan endpoint for `/data/library/incoming`, constrained inside `LIBRARY_PATH`.
-- Import screen wired to upload, scan, feedback states, and recent jobs.
-
-For local bulk imports with Compose, place EPUB files under `library-import/`.
-The scan imports every `.epub`/`.EPUB` file recursively, regardless of folder or file naming.
-Nested folders are supported, for example:
-
-```txt
-library-import/
-  Series Name/
-    Tome1.epub
-    Tome2.epub
-```
-
-The backend mounts this folder read-only at `/data/library/incoming` and the scan button imports it recursively.
-
-Next phases:
-
-- Phase 3: premium library UI with real imported content.
-- Phase 4: integrated EPUB reader.
-- Phase 5: offline EPUB download/read path.
-- Phase 6: full sync conflict handling and bookmarks sync.
+Inside the backend container, the library volume is mounted at `/data/library`.
