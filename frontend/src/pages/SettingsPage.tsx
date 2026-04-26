@@ -17,7 +17,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { apiFetch, scanIncoming, type ImportJobsResponse, type ScanResponse } from "../lib/api";
-import { db } from "../lib/db";
+import { db, type OfflineBook } from "../lib/db";
+import { removeOfflineBook } from "../lib/offline";
 import { useAuth } from "../providers/AuthProvider";
 import { useOffline } from "../providers/OfflineProvider";
 import { useSyncState } from "../providers/SyncProvider";
@@ -28,6 +29,7 @@ const themes: AppTheme[] = ["system", "black_gold", "dark", "light"];
 type LocalStats = {
   offlineCount: number;
   offlineBytes: number;
+  offlineBooks: OfflineBook[];
   progressCount: number;
   bookmarkCount: number;
   queuePending: number;
@@ -67,6 +69,7 @@ async function readLocalStats(): Promise<LocalStats> {
   return {
     offlineCount: offlineBooks.filter((book) => book.epub_blob).length,
     offlineBytes,
+    offlineBooks: offlineBooks.filter((book) => book.epub_blob),
     progressCount,
     bookmarkCount: bookmarks.filter((bookmark) => !bookmark.deleted).length,
     queuePending: queue.filter((event) => event.status === "pending" || event.status === "syncing").length,
@@ -193,6 +196,19 @@ export function AdvancedSettingsPage() {
     }
   }
 
+  async function handleRemoveOfflineBook(bookId: string) {
+    setLocalBusy(true);
+    setLocalMessage(null);
+    try {
+      await removeOfflineBook(bookId);
+      setLocalMessage("Livre retire du cache offline");
+      await queryClient.invalidateQueries({ queryKey: ["advanced", "local-stats"] });
+      await queryClient.invalidateQueries({ queryKey: ["books"] });
+    } finally {
+      setLocalBusy(false);
+    }
+  }
+
   const stats = localStats.data;
 
   return (
@@ -275,6 +291,30 @@ export function AdvancedSettingsPage() {
             {localBusy ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Trash2 size={18} aria-hidden="true" />}
             Purger cache local
           </button>
+          <div className="maintenance-list">
+            {(stats?.offlineBooks ?? []).map((book) => (
+              <div key={book.book_id} className="maintenance-row success">
+                <div>
+                  <strong>{book.title}</strong>
+                  <span>{formatBytes(book.file_size)}</span>
+                </div>
+                <p>
+                  <span>{book.authors[0] ?? "Auteur inconnu"}</span>
+                  <button
+                    className="icon-button compact-icon"
+                    aria-label={`Retirer ${book.title} du cache offline`}
+                    onClick={() => void handleRemoveOfflineBook(book.book_id)}
+                    disabled={localBusy}
+                  >
+                    <Trash2 size={16} aria-hidden="true" />
+                  </button>
+                </p>
+              </div>
+            ))}
+            {!localStats.isLoading && (stats?.offlineBooks.length ?? 0) === 0 && (
+              <p className="muted-line">Aucun EPUB offline.</p>
+            )}
+          </div>
           {localMessage && (
             <p className="notice success">
               <Check size={16} aria-hidden="true" />

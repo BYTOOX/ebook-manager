@@ -8,6 +8,7 @@ import {
   type ReactNode
 } from "react";
 import { apiFetch, type User } from "../lib/api";
+import { db } from "../lib/db";
 
 type AuthStatus = "loading" | "authenticated" | "anonymous";
 
@@ -26,6 +27,35 @@ type LoginResponse = {
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+const AUTH_CACHE_KEY = "auth:last_user";
+
+async function cacheUser(user: User | null) {
+  if (!user) {
+    await db.settings_cache.delete(AUTH_CACHE_KEY);
+    return;
+  }
+  await db.settings_cache.put({
+    key: AUTH_CACHE_KEY,
+    value: user,
+    updated_at: new Date().toISOString()
+  });
+}
+
+async function readCachedUser() {
+  const cached = await db.settings_cache.get(AUTH_CACHE_KEY);
+  if (!cached || typeof cached.value !== "object" || cached.value === null) {
+    return null;
+  }
+  const value = cached.value as Partial<User>;
+  if (typeof value.id !== "string" || typeof value.username !== "string") {
+    return null;
+  }
+  return {
+    id: value.id,
+    username: value.username,
+    display_name: typeof value.display_name === "string" ? value.display_name : null
+  } satisfies User;
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>("loading");
@@ -34,9 +64,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     try {
       const nextUser = await apiFetch<User>("/auth/me");
+      await cacheUser(nextUser);
       setUser(nextUser);
       setStatus("authenticated");
     } catch {
+      if (!navigator.onLine) {
+        const cachedUser = await readCachedUser();
+        if (cachedUser) {
+          setUser(cachedUser);
+          setStatus("authenticated");
+          return;
+        }
+      }
+      await cacheUser(null);
       setUser(null);
       setStatus("anonymous");
     }
@@ -51,6 +91,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: "POST",
       body: JSON.stringify({ username, password })
     });
+    await cacheUser(response.user);
     setUser(response.user);
     setStatus("authenticated");
   }, []);
@@ -64,12 +105,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         display_name: displayName
       })
     });
+    await cacheUser(response.user);
     setUser(response.user);
     setStatus("authenticated");
   }, []);
 
   const logout = useCallback(async () => {
     await apiFetch<{ ok: boolean }>("/auth/logout", { method: "POST" });
+    await cacheUser(null);
     setUser(null);
     setStatus("anonymous");
   }, []);

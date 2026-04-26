@@ -21,6 +21,7 @@ import {
   type ReadingProgress
 } from "../lib/api";
 import { db, type LocalReadingProgress } from "../lib/db";
+import { getOfflineBookDetail } from "../lib/offline";
 import { enqueueSyncEvent } from "../lib/sync";
 import { useSyncState } from "../providers/SyncProvider";
 
@@ -160,7 +161,17 @@ async function loadEpubBlob(bookId: string) {
   if (offlineBook?.epub_blob) {
     return { blob: offlineBook.epub_blob, source: "offline" as const };
   }
-  return { blob: await apiBlob(`/books/${bookId}/file`), source: "network" as const };
+  if (!navigator.onLine) {
+    throw new Error("EPUB non telecharge. Reconnecte le reseau pour l'ouvrir ou telecharge-le offline depuis sa fiche.");
+  }
+  try {
+    return { blob: await apiBlob(`/books/${bookId}/file`), source: "network" as const };
+  } catch (caught) {
+    if (!navigator.onLine) {
+      throw new Error("EPUB non telecharge. Reconnecte le reseau pour l'ouvrir ou telecharge-le offline depuis sa fiche.");
+    }
+    throw caught;
+  }
 }
 
 function buildReaderTheme(settings: ReaderSettings) {
@@ -276,7 +287,20 @@ export function ReaderPage() {
 
   const { data: book } = useQuery({
     queryKey: ["book", bookId, "reader"],
-    queryFn: () => apiFetch<BookDetail>(`/books/${bookId}`),
+    queryFn: async () => {
+      if (!bookId) {
+        throw new Error("Livre introuvable");
+      }
+      try {
+        return await apiFetch<BookDetail>(`/books/${bookId}`);
+      } catch (caught) {
+        const offlineBook = await getOfflineBookDetail(bookId);
+        if (offlineBook) {
+          return offlineBook;
+        }
+        throw caught;
+      }
+    },
     enabled: Boolean(bookId)
   });
 

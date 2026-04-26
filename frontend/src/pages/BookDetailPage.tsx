@@ -1,10 +1,16 @@
-import { BookOpen, Check, Download, FileText, Loader2, Pencil, Play, Save, Star, Users, X } from "lucide-react";
+import { BookOpen, Check, Download, FileText, Loader2, Pencil, Play, Save, Star, Trash2, Users, X } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { apiFetch, updateBook, type BookDetail } from "../lib/api";
 import { BookCard } from "../components/BookCard";
-import { downloadBookForOffline, isBookOffline } from "../lib/offline";
+import {
+  downloadBookForOffline,
+  getOfflineBookDetail,
+  getOfflineCoverObjectUrl,
+  isBookOffline,
+  removeOfflineBook
+} from "../lib/offline";
 
 function formatBytes(size: number | null) {
   if (!size) {
@@ -27,6 +33,7 @@ export function BookDetailPage() {
   const [offlineReady, setOfflineReady] = useState(false);
   const [offlineBusy, setOfflineBusy] = useState(false);
   const [offlineError, setOfflineError] = useState<string | null>(null);
+  const [coverObjectUrl, setCoverObjectUrl] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [metadataBusy, setMetadataBusy] = useState(false);
   const [metadataError, setMetadataError] = useState<string | null>(null);
@@ -41,7 +48,20 @@ export function BookDetailPage() {
   });
   const { data } = useQuery({
     queryKey: ["book", bookId],
-    queryFn: () => apiFetch<BookDetail>(`/books/${bookId}`),
+    queryFn: async () => {
+      if (!bookId) {
+        throw new Error("Livre introuvable");
+      }
+      try {
+        return await apiFetch<BookDetail>(`/books/${bookId}`);
+      } catch (caught) {
+        const offlineBook = await getOfflineBookDetail(bookId);
+        if (offlineBook) {
+          return offlineBook;
+        }
+        throw caught;
+      }
+    },
     enabled: Boolean(bookId)
   });
 
@@ -59,6 +79,29 @@ export function BookDetailPage() {
       alive = false;
     };
   }, [bookId]);
+
+  useEffect(() => {
+    let alive = true;
+    let objectUrl: string | null = null;
+    setCoverObjectUrl(null);
+    if (!bookId) {
+      return;
+    }
+    getOfflineCoverObjectUrl(bookId).then((url) => {
+      objectUrl = url;
+      if (alive) {
+        setCoverObjectUrl(url);
+      } else if (url) {
+        URL.revokeObjectURL(url);
+      }
+    });
+    return () => {
+      alive = false;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [bookId, offlineReady]);
 
   useEffect(() => {
     if (!data) {
@@ -86,6 +129,23 @@ export function BookDetailPage() {
       setOfflineReady(true);
     } catch (caught) {
       setOfflineError(caught instanceof Error ? caught.message : "Telechargement offline impossible");
+    } finally {
+      setOfflineBusy(false);
+    }
+  }
+
+  async function handleOfflineRemove() {
+    if (!data || offlineBusy || !offlineReady) {
+      return;
+    }
+    setOfflineBusy(true);
+    setOfflineError(null);
+    try {
+      await removeOfflineBook(data.id);
+      setOfflineReady(false);
+      await queryClient.invalidateQueries({ queryKey: ["books"] });
+    } catch (caught) {
+      setOfflineError(caught instanceof Error ? caught.message : "Suppression offline impossible");
     } finally {
       setOfflineBusy(false);
     }
@@ -124,10 +184,12 @@ export function BookDetailPage() {
     return <main className="page"><div className="skeleton tall" /></main>;
   }
 
+  const coverUrl = coverObjectUrl ?? data.cover_url;
+
   return (
     <main className="book-detail">
       <div className="detail-cover">
-        {data.cover_url ? <img src={data.cover_url} alt="" /> : <span>{data.title[0]}</span>}
+        {coverUrl ? <img src={coverUrl} alt="" /> : <span>{data.title[0]}</span>}
       </div>
       <section className="detail-body">
         <p className="eyebrow">{data.status}</p>
@@ -155,6 +217,12 @@ export function BookDetailPage() {
             )}
             {offlineReady ? "Disponible offline" : offlineBusy ? "Telechargement" : "Offline"}
           </button>
+          {offlineReady && (
+            <button className="secondary-action" onClick={() => void handleOfflineRemove()} disabled={offlineBusy}>
+              {offlineBusy ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Trash2 size={18} aria-hidden="true" />}
+              Retirer offline
+            </button>
+          )}
           <button className="secondary-action" onClick={() => setEditing((value) => !value)}>
             {editing ? <X size={18} aria-hidden="true" /> : <Pencil size={18} aria-hidden="true" />}
             {editing ? "Annuler" : "Modifier"}

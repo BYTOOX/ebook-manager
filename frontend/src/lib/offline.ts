@@ -34,6 +34,27 @@ export function applyLocalOfflineAvailability<T extends { id: string; is_offline
   });
 }
 
+export async function getOfflineBookDetail(bookId: string) {
+  const book = await db.offline_books.get(bookId);
+  if (!book?.epub_blob || !book.metadata_snapshot) {
+    return null;
+  }
+  return {
+    ...book.metadata_snapshot,
+    title: book.title,
+    authors: book.authors,
+    is_offline_available: true
+  };
+}
+
+export async function getOfflineCoverObjectUrl(bookId: string) {
+  const book = await db.offline_books.get(bookId);
+  if (!book?.cover_blob) {
+    return null;
+  }
+  return URL.createObjectURL(book.cover_blob);
+}
+
 export async function downloadBookForOffline(book: BookDetail) {
   const [epubBlob, coverBlob] = await Promise.all([
     apiBlob(`/books/${book.id}/file`),
@@ -46,6 +67,7 @@ export async function downloadBookForOffline(book: BookDetail) {
     authors: book.authors,
     cover_blob: coverBlob,
     epub_blob: epubBlob,
+    metadata_snapshot: { ...book, is_offline_available: true },
     downloaded_at: new Date().toISOString(),
     file_size: book.file_size ?? epubBlob.size,
     version_hash: `${book.file_size ?? epubBlob.size}:${book.original_filename ?? book.id}`

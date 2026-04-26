@@ -568,6 +568,12 @@ button:disabled {
   border-radius: 8px;
 }
 
+.compact-icon {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+}
+
 .bottom-nav {
   position: fixed;
   left: 0;

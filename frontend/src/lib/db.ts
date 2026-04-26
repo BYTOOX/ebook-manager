@@ -1,4 +1,5 @@
 import Dexie, { type Table } from "dexie";
+import type { BookDetail } from "./api";
 
 export type OfflineBook = {
   book_id: string;
@@ -6,6 +7,7 @@ export type OfflineBook = {
   authors: string[];
   cover_blob?: Blob;
   epub_blob?: Blob;
+  metadata_snapshot?: BookDetail;
   downloaded_at: string;
   file_size?: number;
   version_hash?: string;
