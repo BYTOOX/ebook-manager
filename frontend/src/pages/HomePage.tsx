@@ -9,18 +9,34 @@ import { applyLocalOfflineAvailability, listOfflineBookIds } from "../lib/offlin
 
 export function HomePage() {
   const [offlineBookIds, setOfflineBookIds] = useState<Set<string>>(new Set());
-  const { data, isLoading } = useQuery({
-    queryKey: ["books", "home"],
-    queryFn: () => apiFetch<BookListResponse>("/books?limit=12")
+  const recentBooks = useQuery({
+    queryKey: ["books", "home", "recent"],
+    queryFn: () => apiFetch<BookListResponse>("/books?limit=12&sort=added_at&order=desc")
+  });
+  const continueBooks = useQuery({
+    queryKey: ["books", "home", "continue"],
+    queryFn: () => apiFetch<BookListResponse>("/books?status=in_progress&limit=6&sort=last_opened_at&order=desc")
+  });
+  const offlineCandidates = useQuery({
+    queryKey: ["books", "home", "offline-candidates"],
+    queryFn: () => apiFetch<BookListResponse>("/books?limit=120&sort=title&order=asc")
   });
 
-  const books = data?.items ?? [];
-  const booksWithOffline = useMemo(
-    () => applyLocalOfflineAvailability(books, offlineBookIds),
-    [books, offlineBookIds]
+  const recentWithOffline = useMemo(
+    () => applyLocalOfflineAvailability(recentBooks.data?.items ?? [], offlineBookIds),
+    [recentBooks.data?.items, offlineBookIds]
   );
-  const downloadedBooks = booksWithOffline.filter((book) => book.is_offline_available).slice(0, 6);
-  const continueBook = booksWithOffline.find((book) => book.status === "in_progress") ?? booksWithOffline[0];
+  const continueWithOffline = useMemo(
+    () => applyLocalOfflineAvailability(continueBooks.data?.items ?? [], offlineBookIds),
+    [continueBooks.data?.items, offlineBookIds]
+  );
+  const offlineWithAvailability = useMemo(
+    () => applyLocalOfflineAvailability(offlineCandidates.data?.items ?? [], offlineBookIds),
+    [offlineCandidates.data?.items, offlineBookIds]
+  );
+  const downloadedBooks = offlineWithAvailability.filter((book) => book.is_offline_available).slice(0, 6);
+  const continueBook = continueWithOffline[0] ?? recentWithOffline[0];
+  const isLoading = recentBooks.isLoading || continueBooks.isLoading || offlineCandidates.isLoading;
 
   useEffect(() => {
     let mounted = true;
@@ -41,7 +57,7 @@ export function HomePage() {
     };
   }, []);
 
-  if (!isLoading && booksWithOffline.length === 0) {
+  if (!isLoading && recentWithOffline.length === 0) {
     return <EmptyLibrary />;
   }
 
@@ -90,7 +106,7 @@ export function HomePage() {
         </Link>
       </section>
       <div className="book-grid">
-        {booksWithOffline.map((book) => (
+        {recentWithOffline.map((book) => (
           <BookCard key={book.id} book={book} />
         ))}
       </div>
