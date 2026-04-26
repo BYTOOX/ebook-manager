@@ -17,9 +17,10 @@ os.environ["INCOMING_PATH"] = str(TEST_LIBRARY_PATH / "incoming")
 from fastapi.testclient import TestClient  # noqa: E402
 from PIL import Image  # noqa: E402
 
-from app.core.database import Base, engine  # noqa: E402
+from app.core.database import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app import models  # noqa: F401, E402
+from app.models.reading import Bookmark  # noqa: E402
 
 
 def setup_function() -> None:
@@ -299,6 +300,156 @@ def test_progress_endpoint_and_sync_event_update_reading_progress() -> None:
     assert books.status_code == 200
     assert books.json()["items"][0]["status"] == "in_progress"
     assert books.json()["items"][0]["progress_percent"] == 64
+
+
+def test_sync_progress_returns_server_winner_for_stale_event() -> None:
+    client = TestClient(app)
+    client.post(
+        "/api/v1/auth/setup",
+        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
+    )
+
+    upload = client.post(
+        "/api/v1/books/upload",
+        files={"file": ("progress-conflict.epub", make_test_epub(), "application/epub+zip")},
+    )
+    assert upload.status_code == 201
+    book_id = upload.json()["book_id"]
+
+    current = client.put(
+        f"/api/v1/books/{book_id}/progress",
+        json={
+            "cfi": "epubcfi(/6/2!/4/2/9:0)",
+            "progress_percent": 80,
+            "client_updated_at": "2026-04-26T12:20:00Z",
+        },
+    )
+    assert current.status_code == 200
+
+    stale = client.post(
+        "/api/v1/sync/events",
+        json={
+            "device_id": "old-device",
+            "events": [
+                {
+                    "event_id": str(uuid.uuid4()),
+                    "type": "progress.updated",
+                    "client_created_at": "2026-04-26T12:00:00Z",
+                    "payload": {
+                        "book_id": book_id,
+                        "cfi": "epubcfi(/6/2!/4/2/1:0)",
+                        "progress_percent": 10,
+                        "client_updated_at": "2026-04-26T12:00:00Z",
+                    },
+                }
+            ],
+        },
+    )
+    assert stale.status_code == 200
+    payload = stale.json()
+    assert payload["processed"] == 1
+    assert payload["results"][0]["resolved"] == "server_won"
+    assert payload["results"][0]["progress"]["progress_percent"] == 80
+
+    progress = client.get(f"/api/v1/books/{book_id}/progress")
+    assert progress.status_code == 200
+    assert progress.json()["progress_percent"] == 80
+
+
+def test_sync_bookmark_create_conflict_and_delete() -> None:
+    client = TestClient(app)
+    client.post(
+        "/api/v1/auth/setup",
+        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
+    )
+
+    upload = client.post(
+        "/api/v1/books/upload",
+        files={"file": ("bookmark.epub", make_test_epub(), "application/epub+zip")},
+    )
+    assert upload.status_code == 201
+    book_id = upload.json()["book_id"]
+    bookmark_id = str(uuid.uuid4())
+
+    created = client.post(
+        "/api/v1/sync/events",
+        json={
+            "device_id": "bookmark-device",
+            "events": [
+                {
+                    "event_id": str(uuid.uuid4()),
+                    "type": "bookmark.created",
+                    "client_created_at": "2026-04-26T12:00:00Z",
+                    "payload": {
+                        "id": bookmark_id,
+                        "book_id": book_id,
+                        "cfi": "epubcfi(/6/2!/4/2/1:0)",
+                        "progress_percent": 18,
+                        "chapter_label": "Start",
+                        "created_at": "2026-04-26T12:00:00Z",
+                        "updated_at": "2026-04-26T12:00:00Z",
+                    },
+                }
+            ],
+        },
+    )
+    assert created.status_code == 200
+    assert created.json()["processed"] == 1
+    assert created.json()["results"][0]["bookmark"]["cfi"] == "epubcfi(/6/2!/4/2/1:0)"
+
+    with SessionLocal() as db:
+        bookmark = db.get(Bookmark, uuid.UUID(bookmark_id))
+        assert bookmark is not None
+        assert bookmark.chapter_label == "Start"
+
+    stale = client.post(
+        "/api/v1/sync/events",
+        json={
+            "device_id": "bookmark-device",
+            "events": [
+                {
+                    "event_id": str(uuid.uuid4()),
+                    "type": "bookmark.created",
+                    "client_created_at": "2026-04-26T11:50:00Z",
+                    "payload": {
+                        "id": bookmark_id,
+                        "book_id": book_id,
+                        "cfi": "epubcfi(/6/2!/4/2/0:0)",
+                        "updated_at": "2026-04-26T11:50:00Z",
+                    },
+                }
+            ],
+        },
+    )
+    assert stale.status_code == 200
+    assert stale.json()["results"][0]["resolved"] == "server_won"
+    assert stale.json()["results"][0]["bookmark"]["cfi"] == "epubcfi(/6/2!/4/2/1:0)"
+
+    deleted = client.post(
+        "/api/v1/sync/events",
+        json={
+            "device_id": "bookmark-device",
+            "events": [
+                {
+                    "event_id": str(uuid.uuid4()),
+                    "type": "bookmark.deleted",
+                    "client_created_at": "2026-04-26T12:10:00Z",
+                    "payload": {
+                        "id": bookmark_id,
+                        "updated_at": "2026-04-26T12:10:00Z",
+                    },
+                }
+            ],
+        },
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()["processed"] == 1
+    assert deleted.json()["results"][0]["bookmark"]["deleted_at"] is not None
+
+    with SessionLocal() as db:
+        bookmark = db.get(Bookmark, uuid.UUID(bookmark_id))
+        assert bookmark is not None
+        assert bookmark.deleted_at is not None
 
 
 def test_book_patch_updates_metadata_authors_and_series() -> None:

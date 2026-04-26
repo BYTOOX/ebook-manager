@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.schemas.book import ReadingProgressOut
+
 
 class SyncEventIn(BaseModel):
     event_id: UUID
@@ -19,7 +21,32 @@ class SyncEventsRequest(BaseModel):
     events: list[SyncEventIn]
 
 
+class SyncBookmarkOut(BaseModel):
+    id: UUID
+    book_id: UUID
+    cfi: str
+    progress_percent: float | None = None
+    chapter_label: str | None = None
+    excerpt: str | None = None
+    note: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    deleted_at: datetime | None = None
+
+
+class SyncEventResult(BaseModel):
+    event_id: UUID
+    type: str
+    status: str
+    resolved: str | None = None
+    book_id: UUID | None = None
+    progress: ReadingProgressOut | None = None
+    bookmark: SyncBookmarkOut | None = None
+    error: str | None = None
+
+
 class SyncEventsResponse(BaseModel):
     ok: bool
     accepted: int
     processed: int
+    results: list[SyncEventResult] = Field(default_factory=list)
