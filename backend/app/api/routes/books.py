@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import CurrentUser, DbSession
 from app.core.config import get_settings
-from app.models.book import Author, Book, BookAuthor, BookSeries, Series
+from app.models.book import Author, Book, BookAuthor, BookSeries, BookTag, Series, Tag
 from app.models.reading import ReadingProgress
 from app.schemas.book import (
     BookDetail,
@@ -198,6 +198,30 @@ def _set_book_series(
     book.book_series.series_index = (
         Decimal(str(series_index)) if series_index is not None else None
     )
+    book.book_series.series_label = "manual"
+
+
+def _set_book_tags(db: Session, book: Book, tag_names: list[str]) -> None:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for name in tag_names:
+        clean_name = name.strip()
+        if not clean_name:
+            continue
+        key = clean_name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(clean_name[:80])
+
+    book.book_tags.clear()
+    for name in cleaned:
+        tag = db.scalar(select(Tag).where(func.lower(Tag.name) == name.lower()))
+        if tag is None:
+            tag = Tag(name=name)
+            db.add(tag)
+            db.flush()
+        book.book_tags.append(BookTag(tag=tag))
 
 
 def _book_series_info(book: Book) -> BookSeriesInfo | None:
@@ -207,7 +231,7 @@ def _book_series_info(book: Book) -> BookSeriesInfo | None:
             index=float(book.book_series.series_index)
             if book.book_series.series_index is not None
             else None,
-            source="manual",
+            source=book.book_series.series_label or "manual",
         )
 
     series_name, series_index = _series_from_filename(book.original_filename)
@@ -225,6 +249,7 @@ def list_books(
     q: str | None = Query(default=None),
     book_status: str | None = Query(default=None, alias="status"),
     favorite: bool | None = Query(default=None),
+    tag: str | None = Query(default=None),
     sort: str = Query(default="added_at"),
     order: str = Query(default="desc"),
     limit: int = Query(default=24, ge=1, le=200),
@@ -249,6 +274,9 @@ def list_books(
         conditions.append(Book.status == book_status)
     if favorite is not None:
         conditions.append(Book.favorite == favorite)
+    clean_tag = tag.strip() if tag else ""
+    if clean_tag:
+        conditions.append(Book.book_tags.any(BookTag.tag.has(func.lower(Tag.name) == clean_tag.lower())))
 
     clean_query = q.strip() if q else ""
     if clean_query:
@@ -361,6 +389,8 @@ def update_book(
             payload.series_name if "series_name" in fields else current_name,
             payload.series_index if "series_index" in fields else current_index,
         )
+    if "tags" in fields:
+        _set_book_tags(db, book, payload.tags or [])
     if "status" in fields:
         if payload.status not in {"unread", "in_progress", "finished", "abandoned"}:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid status")
@@ -451,6 +481,7 @@ def get_book(book_id: UUID, current_user: CurrentUser, db: DbSession) -> BookDet
         subjects=subjects,
         contributors=contributors,
         characters=[],
+        tags=sorted(link.tag.name for link in book.book_tags),
     )
 
 

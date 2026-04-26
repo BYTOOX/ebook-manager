@@ -473,6 +473,7 @@ def test_book_patch_updates_metadata_authors_and_series() -> None:
             "authors": ["Elian Vale", "Codex Tester"],
             "series_name": "Aurelia Cycle",
             "series_index": 1.5,
+            "tags": ["Fantasy", "Aventure"],
             "status": "in_progress",
             "rating": 4,
             "favorite": True,
@@ -483,9 +484,118 @@ def test_book_patch_updates_metadata_authors_and_series() -> None:
     assert payload["title"] == "Aurelia Metadata"
     assert payload["authors"] == ["Elian Vale", "Codex Tester"]
     assert payload["series"] == {"name": "Aurelia Cycle", "index": 1.5, "source": "manual"}
+    assert payload["tags"] == ["Aventure", "Fantasy"]
     assert payload["status"] == "in_progress"
     assert payload["rating"] == 4
     assert payload["favorite"] is True
+
+    tagged = client.get("/api/v1/books?tag=Fantasy")
+    assert tagged.status_code == 200
+    assert tagged.json()["total"] == 1
+    assert tagged.json()["items"][0]["title"] == "Aurelia Metadata"
+
+
+def test_organization_collections_series_and_tags() -> None:
+    client = TestClient(app)
+    client.post(
+        "/api/v1/auth/setup",
+        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
+    )
+
+    first = client.post(
+        "/api/v1/books/upload",
+        files={"file": ("org-one.epub", make_test_epub("Org One", "9780000000501"), "application/epub+zip")},
+    )
+    second = client.post(
+        "/api/v1/books/upload",
+        files={"file": ("org-two.epub", make_test_epub("Org Two", "9780000000502"), "application/epub+zip")},
+    )
+    assert first.status_code == 201
+    assert second.status_code == 201
+    first_id = first.json()["book_id"]
+    second_id = second.json()["book_id"]
+
+    update_series = client.patch(
+        f"/api/v1/books/{first_id}",
+        json={"series_name": "Organisation Cycle", "series_index": 2, "tags": ["Cycle"]},
+    )
+    assert update_series.status_code == 200
+    update_second_series = client.patch(
+        f"/api/v1/books/{second_id}",
+        json={"series_name": "Organisation Cycle", "series_index": 1, "tags": ["Cycle", "Favori"]},
+    )
+    assert update_second_series.status_code == 200
+
+    collection = client.post(
+        "/api/v1/organization/collections",
+        json={"name": "Pile prioritaire", "description": "A lire bientot"},
+    )
+    assert collection.status_code == 201
+    collection_id = collection.json()["id"]
+    assert collection.json()["book_count"] == 0
+
+    set_books = client.put(
+        f"/api/v1/organization/collections/{collection_id}/books",
+        json={"book_ids": [first_id, second_id]},
+    )
+    assert set_books.status_code == 200
+    payload = set_books.json()
+    assert payload["book_count"] == 2
+    assert [book["title"] for book in payload["books"]] == ["Org One", "Org Two"]
+
+    collections = client.get("/api/v1/organization/collections")
+    assert collections.status_code == 200
+    assert collections.json()["total"] == 1
+    assert collections.json()["items"][0]["name"] == "Pile prioritaire"
+
+    series = client.get("/api/v1/organization/series")
+    assert series.status_code == 200
+    assert series.json()["total"] == 1
+    assert series.json()["items"][0]["name"] == "Organisation Cycle"
+
+    series_detail = client.get(f"/api/v1/organization/series/{series.json()['items'][0]['id']}")
+    assert series_detail.status_code == 200
+    assert [book["title"] for book in series_detail.json()["books"]] == ["Org Two", "Org One"]
+
+    tags = client.get("/api/v1/organization/tags")
+    assert tags.status_code == 200
+    assert {tag["name"] for tag in tags.json()["items"]} == {"Cycle", "Favori"}
+
+    create_tag = client.post("/api/v1/organization/tags", json={"name": "Archive", "color": "#f5c542"})
+    assert create_tag.status_code == 201
+    assert create_tag.json()["name"] == "Archive"
+
+
+def test_organization_series_materializes_import_path_series() -> None:
+    client = TestClient(app)
+    client.post(
+        "/api/v1/auth/setup",
+        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
+    )
+
+    series_dir = TEST_LIBRARY_PATH / "incoming" / "CHERUB"
+    series_dir.mkdir(parents=True)
+    (series_dir / "CHERUB 01.epub").write_bytes(make_test_epub("100 jours en enfer", "9780000000601"))
+    (series_dir / "CHERUB 02.epub").write_bytes(make_test_epub("Trafic", "9780000000602"))
+
+    scan = client.post("/api/v1/library/scan", json={})
+    assert scan.status_code == 200
+    assert scan.json()["imported"] == 2
+
+    series = client.get("/api/v1/organization/series")
+    assert series.status_code == 200
+    payload = series.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["name"] == "CHERUB"
+    assert payload["items"][0]["book_count"] == 2
+
+    detail = client.get(f"/api/v1/organization/series/{payload['items'][0]['id']}")
+    assert detail.status_code == 200
+    assert [book["title"] for book in detail.json()["books"]] == ["100 jours en enfer", "Trafic"]
+
+    book_detail = client.get(f"/api/v1/books/{detail.json()['books'][0]['id']}")
+    assert book_detail.status_code == 200
+    assert book_detail.json()["series"]["source"] == "import_path"
 
 
 def test_series_index_does_not_treat_title_number_as_volume() -> None:

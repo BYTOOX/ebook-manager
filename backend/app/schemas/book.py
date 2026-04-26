@@ -36,6 +36,7 @@ class BookUpdate(BaseModel):
     authors: list[str] | None = None
     series_name: str | None = None
     series_index: float | None = None
+    tags: list[str] | None = None
     status: str | None = None
     rating: int | None = None
     favorite: bool | None = None
@@ -56,6 +57,7 @@ class BookDetail(BookListItem):
     subjects: list[str] = []
     contributors: list[str] = []
     characters: list[str] = []
+    tags: list[str] = []
 
     model_config = ConfigDict(from_attributes=True)
 
