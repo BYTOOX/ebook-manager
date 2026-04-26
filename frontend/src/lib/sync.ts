@@ -32,6 +32,21 @@ type ServerSyncResponse = {
   results?: ServerSyncEventResult[];
 };
 
+export type SyncFlushResult = {
+  synced: number;
+  pending: number;
+  failed: number;
+};
+
+async function queueCounts(synced = 0): Promise<SyncFlushResult> {
+  const events = await db.sync_queue.toArray();
+  return {
+    synced,
+    pending: events.filter((event) => event.status === "pending" || event.status === "syncing").length,
+    failed: events.filter((event) => event.status === "failed").length
+  };
+}
+
 export async function enqueueSyncEvent(event: SyncEvent) {
   if (event.type === "progress.updated" && typeof event.payload.book_id === "string") {
     const existing = await db.sync_queue
@@ -141,7 +156,7 @@ async function applyBookmarkResult(event: SyncEvent, result: ServerSyncEventResu
 
 export async function flushSyncQueue(deviceId = "android-pwa") {
   if (!navigator.onLine) {
-    return { synced: 0 };
+    return queueCounts(0);
   }
 
   const events = await db.sync_queue
@@ -149,7 +164,7 @@ export async function flushSyncQueue(deviceId = "android-pwa") {
     .limit(25)
     .toArray();
   if (events.length === 0) {
-    return { synced: 0 };
+    return queueCounts(0);
   }
 
   const ids = events.map((event) => event.event_id);
@@ -204,7 +219,7 @@ export async function flushSyncQueue(deviceId = "android-pwa") {
           }))
         );
       }
-      return { synced: response.accepted };
+      return queueCounts(response.accepted);
     }
     throw new Error("Sync rejected");
   } catch {
@@ -219,5 +234,5 @@ export async function flushSyncQueue(deviceId = "android-pwa") {
     );
   }
 
-  return { synced: 0 };
+  return queueCounts(0);
 }

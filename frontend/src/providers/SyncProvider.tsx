@@ -7,10 +7,10 @@ import {
   useState,
   type ReactNode
 } from "react";
-import { flushSyncQueue } from "../lib/sync";
+import { flushSyncQueue, type SyncFlushResult } from "../lib/sync";
 import { useOffline } from "./OfflineProvider";
 
-type SyncState = "synced" | "syncing" | "offline" | "error";
+type SyncState = "synced" | "syncing" | "pending" | "offline" | "error";
 
 type SyncContextValue = {
   state: SyncState;
@@ -18,6 +18,16 @@ type SyncContextValue = {
 };
 
 const SyncContext = createContext<SyncContextValue | null>(null);
+
+function stateFromResult(result: SyncFlushResult): SyncState {
+  if (result.failed > 0) {
+    return "error";
+  }
+  if (result.pending > 0) {
+    return "pending";
+  }
+  return "synced";
+}
 
 export function SyncProvider({ children }: { children: ReactNode }) {
   const { online } = useOffline();
@@ -30,8 +40,8 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     }
     setState("syncing");
     try {
-      await flushSyncQueue();
-      setState("synced");
+      const result = await flushSyncQueue();
+      setState(stateFromResult(result));
     } catch {
       setState("error");
     }
