@@ -19,10 +19,14 @@ import { Link, useParams } from "react-router-dom";
 import {
   apiBlob,
   apiFetch,
+  getReadingSettings,
   listBookBookmarks,
+  updateReadingSettings,
   type BookmarkItem,
   type BookDetail,
-  type ReadingProgress
+  type ReadingProgress,
+  type ReadingSettings as ServerReadingSettings,
+  type ReadingSettingsUpdate
 } from "../lib/api";
 import { db, type LocalBookmark, type LocalReadingProgress } from "../lib/db";
 import { getOfflineBookDetail } from "../lib/offline";
@@ -75,6 +79,32 @@ const fontOptions = [
     value: '"Atkinson Hyperlegible", Inter, ui-sans-serif, system-ui, sans-serif'
   }
 ];
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function serverToReaderSettings(settings: ServerReadingSettings): ReaderSettings {
+  const fontSize = Math.round((settings.font_size / 18) * DEFAULT_SETTINGS.fontSize);
+  return {
+    mode: settings.reading_mode === "scroll" ? "scroll" : "paged",
+    fontSize: clamp(fontSize, 86, 146),
+    lineHeight: clamp(Number(settings.line_height) || DEFAULT_SETTINGS.lineHeight, 1.35, 2.2),
+    margin: clamp(settings.margin_size, 8, 56),
+    fontFamily: settings.font_family || DEFAULT_SETTINGS.fontFamily
+  };
+}
+
+function readerToServerSettings(settings: ReaderSettings): ReadingSettingsUpdate {
+  return {
+    reader_theme: "black_gold",
+    font_family: settings.fontFamily,
+    font_size: clamp(Math.round((settings.fontSize / DEFAULT_SETTINGS.fontSize) * 18), 12, 36),
+    line_height: Number(settings.lineHeight.toFixed(2)),
+    margin_size: settings.margin,
+    reading_mode: settings.mode
+  };
+}
 
 function flattenToc(items: NavItem[], depth = 0): TocEntry[] {
   return items.flatMap((item) => [
@@ -326,6 +356,8 @@ export function ReaderPage() {
   const bookRef = useRef<Book | null>(null);
   const flushRef = useRef(flush);
   const saveTimerRef = useRef<number | null>(null);
+  const settingsSaveTimerRef = useRef<number | null>(null);
+  const skipNextSettingsSaveRef = useRef(true);
   const latestPositionRef = useRef<ReaderPosition | null>(null);
   const lastSavedCfiRef = useRef<string | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -391,23 +423,60 @@ export function ReaderPage() {
 
   useEffect(() => {
     let alive = true;
-    db.settings_cache
-      .get(SETTINGS_KEY)
-      .then((cached) => {
-        if (!alive || !cached || typeof cached.value !== "object" || cached.value === null) {
-          return;
+    async function hydrateSettings() {
+      let nextSettings = DEFAULT_SETTINGS;
+      const cached = await db.settings_cache.get(SETTINGS_KEY);
+      if (cached && typeof cached.value === "object" && cached.value !== null) {
+        nextSettings = { ...DEFAULT_SETTINGS, ...(cached.value as Partial<ReaderSettings>) };
+      }
+
+      if (navigator.onLine) {
+        const serverSettings = await getReadingSettings().catch(() => null);
+        if (serverSettings) {
+          nextSettings = serverToReaderSettings(serverSettings);
+          await db.settings_cache.put({
+            key: SETTINGS_KEY,
+            value: nextSettings,
+            updated_at: serverSettings.updated_at
+          });
         }
-        setSettings({ ...DEFAULT_SETTINGS, ...(cached.value as Partial<ReaderSettings>) });
-      })
-      .finally(() => {
-        if (alive) {
-          setSettingsReady(true);
-        }
-      });
+      }
+
+      if (!alive) {
+        return;
+      }
+      skipNextSettingsSaveRef.current = true;
+      setSettings(nextSettings);
+      setSettingsReady(true);
+    }
+
+    void hydrateSettings().catch(() => {
+      if (alive) {
+        setSettingsReady(true);
+      }
+    });
+
     return () => {
       alive = false;
+      if (settingsSaveTimerRef.current) {
+        window.clearTimeout(settingsSaveTimerRef.current);
+      }
     };
   }, []);
+
+  useEffect(() => {
+    if (!settingsReady) {
+      return;
+    }
+    const syncCurrentSettings = () => {
+      if (!navigator.onLine) {
+        return;
+      }
+      void updateReadingSettings(readerToServerSettings(settings)).catch(() => undefined);
+    };
+    window.addEventListener("online", syncCurrentSettings);
+    return () => window.removeEventListener("online", syncCurrentSettings);
+  }, [settings, settingsReady]);
 
   useEffect(() => {
     if (!settingsReady) {
@@ -421,6 +490,24 @@ export function ReaderPage() {
     if (renditionRef.current) {
       applyReaderTheme(renditionRef.current, settings);
     }
+    if (skipNextSettingsSaveRef.current) {
+      skipNextSettingsSaveRef.current = false;
+      return;
+    }
+    if (!navigator.onLine) {
+      return;
+    }
+    if (settingsSaveTimerRef.current) {
+      window.clearTimeout(settingsSaveTimerRef.current);
+    }
+    settingsSaveTimerRef.current = window.setTimeout(() => {
+      void updateReadingSettings(readerToServerSettings(settings)).catch(() => undefined);
+    }, 800);
+    return () => {
+      if (settingsSaveTimerRef.current) {
+        window.clearTimeout(settingsSaveTimerRef.current);
+      }
+    };
   }, [settings, settingsReady]);
 
   useEffect(() => {

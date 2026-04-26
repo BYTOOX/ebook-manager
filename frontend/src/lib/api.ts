@@ -158,6 +158,25 @@ export type ReadingProgressResponse = {
   progress: ReadingProgress;
 };
 
+export type ReadingSettings = {
+  id: string;
+  theme: string;
+  reader_theme: string;
+  font_family: string | null;
+  font_size: number;
+  line_height: number | string;
+  margin_size: number;
+  reading_mode: "paged" | "scroll" | string;
+  updated_at: string;
+};
+
+export type ReadingSettingsUpdate = Partial<
+  Pick<
+    ReadingSettings,
+    "theme" | "reader_theme" | "font_family" | "font_size" | "line_height" | "margin_size" | "reading_mode"
+  >
+>;
+
 export type ImportJob = {
   id: string;
   source: "upload" | "scan" | string;
@@ -339,6 +358,17 @@ export async function applyBookMetadata(bookId: string, resultId: string, fields
 
 export async function listBookBookmarks(bookId: string) {
   return apiFetch<BookmarkListResponse>(`/books/${bookId}/bookmarks`);
+}
+
+export async function getReadingSettings() {
+  return apiFetch<ReadingSettings>("/settings/reading");
+}
+
+export async function updateReadingSettings(payload: ReadingSettingsUpdate) {
+  return apiFetch<ReadingSettings>("/settings/reading", {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
 }
 
 export async function createCollection(payload: { name: string; description?: string | null }) {

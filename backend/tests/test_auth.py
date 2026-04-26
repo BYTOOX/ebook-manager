@@ -68,6 +68,39 @@ def test_first_user_setup_login_and_me() -> None:
     assert login.json()["ok"] is True
 
 
+def test_reading_settings_are_persisted_and_validated() -> None:
+    client = TestClient(app)
+    client.post(
+        "/api/v1/auth/setup",
+        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
+    )
+
+    current = client.get("/api/v1/settings/reading")
+    assert current.status_code == 200
+    assert current.json()["reading_mode"] == "paged"
+
+    updated = client.put(
+        "/api/v1/settings/reading",
+        json={
+            "font_family": "Georgia",
+            "font_size": 20,
+            "line_height": "1.75",
+            "margin_size": 32,
+            "reading_mode": "scroll",
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["font_family"] == "Georgia"
+    assert updated.json()["font_size"] == 20
+    assert updated.json()["line_height"] == "1.75"
+    assert updated.json()["margin_size"] == 32
+    assert updated.json()["reading_mode"] == "scroll"
+    assert updated.json()["updated_at"]
+
+    invalid = client.put("/api/v1/settings/reading", json={"reading_mode": "sideways"})
+    assert invalid.status_code == 400
+
+
 def test_epub_upload_extracts_book_and_detects_duplicate() -> None:
     client = TestClient(app)
     client.post(
