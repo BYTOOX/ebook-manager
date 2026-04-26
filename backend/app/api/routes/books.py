@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
@@ -41,7 +42,7 @@ def book_cover_url(book: Book) -> str | None:
     if not book.cover_path:
         return None
     version_source = book.updated_at or book.added_at
-    version = int(version_source.timestamp()) if version_source else 0
+    version = int(version_source.timestamp() * 1000) if version_source else 0
     return f"/api/v1/books/{book.id}/cover?v={version}"
 
 
@@ -510,12 +511,17 @@ def apply_book_metadata(
     if "published_date" in fields:
         book.published_date = _clean_candidate_text(candidate.get("published_date"))
     if "cover" in fields:
-        cover_bytes = MetadataService(get_settings()).download_cover(
-            _clean_candidate_text(candidate.get("cover_url"))
-        )
+        cover_url = _clean_candidate_text(candidate.get("cover_url"))
+        if not cover_url:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provider cover not available")
+        cover_bytes = MetadataService(get_settings()).download_cover(cover_url)
+        if not cover_bytes:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Provider cover download failed")
         cover_path = StorageService(get_settings()).save_cover_jpeg(cover_bytes, book.id)
-        if cover_path:
-            book.cover_path = str(cover_path)
+        if not cover_path:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Provider cover could not be saved")
+        book.cover_path = str(cover_path)
+        book.updated_at = datetime.now(timezone.utc)
 
     book.metadata_source = result.provider
     book.metadata_provider_id = result.provider_item_id

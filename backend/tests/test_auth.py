@@ -23,6 +23,7 @@ from app.main import app  # noqa: E402
 from app import models  # noqa: F401, E402
 from app.models.metadata import MetadataProviderResult  # noqa: E402
 from app.models.reading import Bookmark  # noqa: E402
+from app.services.metadata_service import MetadataService  # noqa: E402
 
 
 def setup_function() -> None:
@@ -598,6 +599,67 @@ def test_metadata_apply_updates_selected_fields_from_provider_result() -> None:
     assert payload["publisher"] == "Aurelia Press"
     assert payload["published_date"] == "2026-04-26"
     assert payload["metadata_source"] == "googlebooks"
+
+
+def test_metadata_apply_cover_replaces_file_and_bumps_cover_url(monkeypatch) -> None:
+    client = TestClient(app)
+    client.post(
+        "/api/v1/auth/setup",
+        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
+    )
+
+    upload = client.post(
+        "/api/v1/books/upload",
+        files={"file": ("provider-cover.epub", make_test_epub(), "application/epub+zip")},
+    )
+    assert upload.status_code == 201
+    book_id = upload.json()["book_id"]
+    before = client.get(f"/api/v1/books/{book_id}")
+    assert before.status_code == 200
+    before_cover_url = before.json()["cover_url"]
+
+    cover_buffer = BytesIO()
+    Image.new("RGB", (4, 4), (20, 40, 220)).save(cover_buffer, "PNG")
+
+    def fake_download_cover(self: MetadataService, cover_url: str) -> bytes:
+        assert cover_url == "https://example.test/cover.jpg"
+        return cover_buffer.getvalue()
+
+    monkeypatch.setattr(MetadataService, "download_cover", fake_download_cover)
+
+    with SessionLocal() as db:
+        result = MetadataProviderResult(
+            book_id=uuid.UUID(book_id),
+            provider="openlibrary",
+            provider_item_id="ol-cover",
+            query="Aurelia cover",
+            raw_json={},
+            normalized_json={
+                "provider": "openlibrary",
+                "provider_item_id": "ol-cover",
+                "title": "Aurelia Phase Two",
+                "authors": ["Codex Tester"],
+                "cover_url": "https://example.test/cover.jpg",
+            },
+            score=Decimal("0.800"),
+        )
+        db.add(result)
+        db.commit()
+        result_id = str(result.id)
+
+    apply = client.post(
+        f"/api/v1/books/{book_id}/metadata/apply",
+        json={"result_id": result_id, "fields": ["cover"]},
+    )
+    assert apply.status_code == 200
+    after_cover_url = apply.json()["cover_url"]
+    assert after_cover_url != before_cover_url
+
+    cover_response = client.get(after_cover_url)
+    assert cover_response.status_code == 200
+    with Image.open(BytesIO(cover_response.content)) as image:
+        red, _green, blue = image.convert("RGB").getpixel((0, 0))
+    assert blue > red
 
 
 def test_organization_collections_series_and_tags() -> None:
