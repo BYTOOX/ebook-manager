@@ -84,7 +84,7 @@ export async function refreshOfflineBookMetadata(book: BookDetail) {
   await db.offline_books.update(book.id, {
     title: book.title,
     authors: book.authors,
-    cover_blob: coverBlob,
+    cover_blob: coverBlob ?? offlineBook.cover_blob,
     metadata_snapshot: { ...book, is_offline_available: true }
   });
   return true;

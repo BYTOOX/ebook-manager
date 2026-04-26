@@ -183,14 +183,10 @@ export function AdvancedSettingsPage() {
     setLocalBusy(true);
     setLocalMessage(null);
     try {
-      await Promise.all([
-        db.offline_books.clear(),
-        db.bookmarks.clear(),
-        db.reading_progress.clear(),
-        db.sync_queue.clear()
-      ]);
-      setLocalMessage("Cache local purge");
+      await db.offline_books.clear();
+      setLocalMessage("Cache EPUB offline purge. Progression et sync conservees.");
       await queryClient.invalidateQueries({ queryKey: ["advanced", "local-stats"] });
+      await queryClient.invalidateQueries({ queryKey: ["books"] });
     } finally {
       setLocalBusy(false);
     }
@@ -289,7 +285,7 @@ export function AdvancedSettingsPage() {
           </div>
           <button className="secondary-action wide" onClick={() => void handlePurgeLocalCache()} disabled={localBusy}>
             {localBusy ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Trash2 size={18} aria-hidden="true" />}
-            Purger cache local
+            Purger EPUB offline
           </button>
           <div className="maintenance-list">
             {(stats?.offlineBooks ?? []).map((book) => (
