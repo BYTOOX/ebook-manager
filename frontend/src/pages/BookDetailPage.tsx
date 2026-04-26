@@ -42,6 +42,7 @@ export function BookDetailPage() {
     authors: "",
     seriesName: "",
     seriesIndex: "",
+    tags: "",
     status: "unread",
     rating: "",
     favorite: false
@@ -112,6 +113,7 @@ export function BookDetailPage() {
       authors: data.authors.join(", "),
       seriesName: data.series?.name ?? "",
       seriesIndex: data.series?.index?.toString() ?? "",
+      tags: data.tags.join(", "),
       status: data.status,
       rating: data.rating?.toString() ?? "",
       favorite: data.favorite
@@ -166,6 +168,10 @@ export function BookDetailPage() {
           .filter(Boolean),
         series_name: metadataForm.seriesName.trim() || null,
         series_index: metadataForm.seriesIndex.trim() ? Number(metadataForm.seriesIndex) : null,
+        tags: metadataForm.tags
+          .split(",")
+          .map((tag) => tag.trim())
+          .filter(Boolean),
         status: metadataForm.status,
         rating: metadataForm.rating.trim() ? Number(metadataForm.rating) : null,
         favorite: metadataForm.favorite
@@ -262,6 +268,13 @@ export function BookDetailPage() {
                 />
               </label>
             </div>
+            <label>
+              <span>Tags</span>
+              <input
+                value={metadataForm.tags}
+                onChange={(event) => setMetadataForm((current) => ({ ...current, tags: event.target.value }))}
+              />
+            </label>
             <div className="metadata-edit-grid">
               <label>
                 <span>Statut</span>
@@ -358,7 +371,7 @@ export function BookDetailPage() {
             )}
           </section>
         )}
-        {(data.characters.length > 0 || data.subjects.length > 0 || data.contributors.length > 0) && (
+        {(data.characters.length > 0 || data.subjects.length > 0 || data.contributors.length > 0 || data.tags.length > 0) && (
           <section className="metadata-band" aria-label="Sujets et personnages">
             <div className="metadata-heading">
               <Users size={18} aria-hidden="true" />
@@ -377,6 +390,14 @@ export function BookDetailPage() {
                 <h3>Sujets</h3>
                 <div className="chip-list">
                   {data.subjects.map((subject) => <span key={subject}>{subject}</span>)}
+                </div>
+              </>
+            )}
+            {data.tags.length > 0 && (
+              <>
+                <h3>Tags</h3>
+                <div className="chip-list">
+                  {data.tags.map((tag) => <span key={tag}>{tag}</span>)}
                 </div>
               </>
             )}

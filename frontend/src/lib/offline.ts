@@ -43,6 +43,7 @@ export async function getOfflineBookDetail(bookId: string) {
     ...book.metadata_snapshot,
     title: book.title,
     authors: book.authors,
+    tags: book.metadata_snapshot.tags ?? [],
     is_offline_available: true
   };
 }

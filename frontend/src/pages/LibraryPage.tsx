@@ -1,7 +1,7 @@
 import { Grid2X2, List, Search, SlidersHorizontal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { apiFetch, type BookListResponse } from "../lib/api";
+import { apiFetch, type BookListResponse, type TagListResponse } from "../lib/api";
 import { BookCard } from "../components/BookCard";
 import { EmptyLibrary } from "../components/EmptyLibrary";
 import { applyLocalOfflineAvailability, listOfflineBookIds } from "../lib/offline";
@@ -24,11 +24,12 @@ const filters: LibraryFilter[] = [
 export function LibraryPage() {
   const [view, setView] = useState<"grid" | "list">("grid");
   const [filter, setFilter] = useState<LibraryFilter>(allFilter);
+  const [tagFilter, setTagFilter] = useState<string>("");
   const [search, setSearch] = useState("");
   const [offlineBookIds, setOfflineBookIds] = useState<Set<string>>(new Set());
   const cleanSearch = search.trim();
   const { data, isLoading } = useQuery({
-    queryKey: ["books", "library", cleanSearch, filter.label],
+    queryKey: ["books", "library", cleanSearch, filter.label, tagFilter],
     queryFn: () => {
       const params = new URLSearchParams({
         limit: "120",
@@ -44,15 +45,22 @@ export function LibraryPage() {
       if (filter.favorite) {
         params.set("favorite", "true");
       }
+      if (tagFilter) {
+        params.set("tag", tagFilter);
+      }
       return apiFetch<BookListResponse>(`/books?${params.toString()}`);
     }
+  });
+  const tags = useQuery({
+    queryKey: ["organization", "tags"],
+    queryFn: () => apiFetch<TagListResponse>("/organization/tags")
   });
   const books = data?.items ?? [];
   const booksWithOffline = useMemo(
     () => applyLocalOfflineAvailability(books, offlineBookIds),
     [books, offlineBookIds]
   );
-  const hasActiveSearch = cleanSearch.length > 0 || filter.label !== allFilter.label;
+  const hasActiveSearch = cleanSearch.length > 0 || filter.label !== allFilter.label || Boolean(tagFilter);
 
   useEffect(() => {
     let mounted = true;
@@ -113,6 +121,19 @@ export function LibraryPage() {
           </button>
         ))}
       </div>
+
+      {(tags.data?.items.length ?? 0) > 0 && (
+        <div className="filter-rail tag-filter-rail" aria-label="Filtres tags">
+          <button className={!tagFilter ? "active" : ""} onClick={() => setTagFilter("")}>
+            Tous tags
+          </button>
+          {tags.data?.items.map((tag) => (
+            <button key={tag.id} className={tagFilter === tag.name ? "active" : ""} onClick={() => setTagFilter(tag.name)}>
+              {tag.name}
+            </button>
+          ))}
+        </div>
+      )}
 
       <p className="result-summary">{data?.total ?? 0} livre(s)</p>
 

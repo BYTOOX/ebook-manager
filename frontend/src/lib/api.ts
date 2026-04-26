@@ -128,6 +128,7 @@ export type BookDetail = BookListItem & {
   subjects: string[];
   contributors: string[];
   characters: string[];
+  tags: string[];
 };
 
 export type BookUpdate = {
@@ -135,6 +136,7 @@ export type BookUpdate = {
   authors?: string[];
   series_name?: string | null;
   series_index?: number | null;
+  tags?: string[] | null;
   status?: string;
   rating?: number | null;
   favorite?: boolean;
@@ -189,6 +191,59 @@ export type ScanResponse = {
   jobs: ImportJob[];
 };
 
+export type CollectionSummary = {
+  id: string;
+  name: string;
+  description: string | null;
+  book_count: number;
+  cover_book_id: string | null;
+  cover_url: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CollectionDetail = CollectionSummary & {
+  books: BookListItem[];
+};
+
+export type CollectionListResponse = {
+  items: CollectionSummary[];
+  total: number;
+};
+
+export type SeriesSummary = {
+  id: string;
+  name: string;
+  description: string | null;
+  book_count: number;
+  cover_book_id: string | null;
+  cover_url: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SeriesDetail = SeriesSummary & {
+  books: BookListItem[];
+};
+
+export type SeriesListResponse = {
+  items: SeriesSummary[];
+  total: number;
+};
+
+export type TagSummary = {
+  id: string;
+  name: string;
+  color: string | null;
+  book_count: number;
+  created_at: string;
+};
+
+export type TagListResponse = {
+  items: TagSummary[];
+  total: number;
+};
+
 export async function uploadBook(file: File) {
   const formData = new FormData();
   formData.append("file", file);
@@ -208,6 +263,27 @@ export async function scanIncoming() {
 export async function updateBook(bookId: string, payload: BookUpdate) {
   return apiFetch<BookDetail>(`/books/${bookId}`, {
     method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function createCollection(payload: { name: string; description?: string | null }) {
+  return apiFetch<CollectionDetail>("/organization/collections", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function setCollectionBooks(collectionId: string, bookIds: string[]) {
+  return apiFetch<CollectionDetail>(`/organization/collections/${collectionId}/books`, {
+    method: "PUT",
+    body: JSON.stringify({ book_ids: bookIds })
+  });
+}
+
+export async function createTag(payload: { name: string; color?: string | null }) {
+  return apiFetch<TagSummary>("/organization/tags", {
+    method: "POST",
     body: JSON.stringify(payload)
   });
 }
