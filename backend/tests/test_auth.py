@@ -401,6 +401,12 @@ def test_sync_bookmark_create_conflict_and_delete() -> None:
     assert created.json()["processed"] == 1
     assert created.json()["results"][0]["bookmark"]["cfi"] == "epubcfi(/6/2!/4/2/1:0)"
 
+    listed = client.get(f"/api/v1/books/{book_id}/bookmarks")
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 1
+    assert listed.json()["items"][0]["id"] == bookmark_id
+    assert listed.json()["items"][0]["progress_percent"] == 18
+
     with SessionLocal() as db:
         bookmark = db.get(Bookmark, uuid.UUID(bookmark_id))
         assert bookmark is not None
@@ -454,6 +460,10 @@ def test_sync_bookmark_create_conflict_and_delete() -> None:
         bookmark = db.get(Bookmark, uuid.UUID(bookmark_id))
         assert bookmark is not None
         assert bookmark.deleted_at is not None
+
+    listed_after_delete = client.get(f"/api/v1/books/{book_id}/bookmarks")
+    assert listed_after_delete.status_code == 200
+    assert listed_after_delete.json() == {"items": [], "total": 0}
 
 
 def test_book_patch_updates_metadata_authors_and_series() -> None:

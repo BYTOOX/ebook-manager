@@ -1,6 +1,7 @@
 import {
   ArrowLeft,
   Bookmark,
+  BookmarkPlus,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -8,6 +9,7 @@ import {
   ListTree,
   Loader2,
   Settings,
+  Trash2,
   X
 } from "lucide-react";
 import type { Book, Location as EpubLocation, NavItem, Rendition } from "epubjs";
@@ -17,10 +19,12 @@ import { Link, useParams } from "react-router-dom";
 import {
   apiBlob,
   apiFetch,
+  listBookBookmarks,
+  type BookmarkItem,
   type BookDetail,
   type ReadingProgress
 } from "../lib/api";
-import { db, type LocalReadingProgress } from "../lib/db";
+import { db, type LocalBookmark, type LocalReadingProgress } from "../lib/db";
 import { getOfflineBookDetail } from "../lib/offline";
 import { enqueueSyncEvent } from "../lib/sync";
 import { useSyncState } from "../providers/SyncProvider";
@@ -264,6 +268,56 @@ async function persistReaderPosition(bookId: string, position: ReaderPosition) {
   });
 }
 
+function timeValue(value?: string | null) {
+  return value ? Date.parse(value) || 0 : 0;
+}
+
+function serverBookmarkToLocal(bookmark: BookmarkItem): LocalBookmark {
+  return {
+    id: bookmark.id,
+    book_id: bookmark.book_id,
+    cfi: bookmark.cfi,
+    progress_percent: bookmark.progress_percent ?? undefined,
+    chapter_label: bookmark.chapter_label ?? undefined,
+    excerpt: bookmark.excerpt ?? undefined,
+    note: bookmark.note ?? undefined,
+    created_at: bookmark.created_at,
+    updated_at: bookmark.updated_at,
+    dirty: false,
+    deleted: Boolean(bookmark.deleted_at)
+  };
+}
+
+function sortBookmarks(bookmarks: LocalBookmark[]) {
+  return [...bookmarks].sort((left, right) => {
+    const leftProgress = left.progress_percent ?? Number.POSITIVE_INFINITY;
+    const rightProgress = right.progress_percent ?? Number.POSITIVE_INFINITY;
+    if (leftProgress !== rightProgress) {
+      return leftProgress - rightProgress;
+    }
+    return timeValue(left.created_at) - timeValue(right.created_at);
+  });
+}
+
+async function refreshReaderBookmarks(bookId: string) {
+  if (navigator.onLine) {
+    const serverBookmarks = await listBookBookmarks(bookId).catch(() => null);
+    if (serverBookmarks) {
+      await Promise.all(
+        serverBookmarks.items.map(async (bookmark) => {
+          const local = await db.bookmarks.get(bookmark.id);
+          if (local?.dirty && timeValue(local.updated_at) > timeValue(bookmark.updated_at)) {
+            return;
+          }
+          await db.bookmarks.put(serverBookmarkToLocal(bookmark));
+        })
+      );
+    }
+  }
+  const localBookmarks = await db.bookmarks.where("book_id").equals(bookId).toArray();
+  return sortBookmarks(localBookmarks.filter((bookmark) => !bookmark.deleted));
+}
+
 export function ReaderPage() {
   const { bookId } = useParams();
   const { flush } = useSyncState();
@@ -279,9 +333,11 @@ export function ReaderPage() {
   const [settings, setSettings] = useState<ReaderSettings>(DEFAULT_SETTINGS);
   const [settingsReady, setSettingsReady] = useState(false);
   const [toc, setToc] = useState<TocEntry[]>([]);
+  const [bookmarks, setBookmarks] = useState<LocalBookmark[]>([]);
   const [position, setPosition] = useState<ReaderPosition | null>(null);
   const [source, setSource] = useState<"network" | "offline">("network");
   const [showToc, setShowToc] = useState(false);
+  const [showBookmarks, setShowBookmarks] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -312,6 +368,26 @@ export function ReaderPage() {
   useEffect(() => {
     flushRef.current = flush;
   }, [flush]);
+
+  useEffect(() => {
+    if (!bookId) {
+      return;
+    }
+    let alive = true;
+    const refresh = () => {
+      void refreshReaderBookmarks(bookId).then((items) => {
+        if (alive) {
+          setBookmarks(items);
+        }
+      });
+    };
+    refresh();
+    window.addEventListener("online", refresh);
+    return () => {
+      alive = false;
+      window.removeEventListener("online", refresh);
+    };
+  }, [bookId]);
 
   useEffect(() => {
     let alive = true;
@@ -527,6 +603,11 @@ export function ReaderPage() {
     setShowToc(false);
   }
 
+  async function displayBookmark(bookmark: LocalBookmark) {
+    await renditionRef.current?.display(bookmark.cfi);
+    setShowBookmarks(false);
+  }
+
   async function addBookmark() {
     if (!bookId || !latestPositionRef.current) {
       return;
@@ -553,7 +634,39 @@ export function ReaderPage() {
       retry_count: 0,
       status: "pending"
     });
+    setBookmarks(await refreshReaderBookmarks(bookId));
     setToast("Marque-page sauvegarde");
+    window.setTimeout(() => setToast(null), 1800);
+    if (navigator.onLine) {
+      void flushRef.current();
+    }
+  }
+
+  async function removeBookmark(bookmark: LocalBookmark) {
+    if (!bookId) {
+      return;
+    }
+    const now = new Date().toISOString();
+    await db.bookmarks.update(bookmark.id, {
+      dirty: true,
+      deleted: true,
+      updated_at: now
+    });
+    await enqueueSyncEvent({
+      event_id: crypto.randomUUID(),
+      type: "bookmark.deleted",
+      payload: {
+        id: bookmark.id,
+        book_id: bookmark.book_id,
+        updated_at: now,
+        client_updated_at: now
+      },
+      created_at: now,
+      retry_count: 0,
+      status: "pending"
+    });
+    setBookmarks(await refreshReaderBookmarks(bookId));
+    setToast("Marque-page supprime");
     window.setTimeout(() => setToast(null), 1800);
     if (navigator.onLine) {
       void flushRef.current();
@@ -576,13 +689,25 @@ export function ReaderPage() {
             className={showToc ? "icon-button active" : "icon-button"}
             onClick={() => {
               setShowToc((value) => !value);
+              setShowBookmarks(false);
               setShowSettings(false);
             }}
           >
             <ListTree size={19} aria-hidden="true" />
           </button>
-          <button aria-label="Marque-page" className="icon-button" onClick={() => void addBookmark()}>
+          <button
+            aria-label="Marque-pages"
+            className={showBookmarks ? "icon-button active" : "icon-button"}
+            onClick={() => {
+              setShowBookmarks((value) => !value);
+              setShowToc(false);
+              setShowSettings(false);
+            }}
+          >
             <Bookmark size={19} aria-hidden="true" />
+          </button>
+          <button aria-label="Ajouter un marque-page" className="icon-button" onClick={() => void addBookmark()}>
+            <BookmarkPlus size={19} aria-hidden="true" />
           </button>
           <button
             aria-label="Reglages"
@@ -590,6 +715,7 @@ export function ReaderPage() {
             onClick={() => {
               setShowSettings((value) => !value);
               setShowToc(false);
+              setShowBookmarks(false);
             }}
           >
             <Settings size={19} aria-hidden="true" />
@@ -634,6 +760,38 @@ export function ReaderPage() {
               ))
             ) : (
               <p className="muted-line">Aucune table des matieres.</p>
+            )}
+          </div>
+        </aside>
+      )}
+
+      {showBookmarks && (
+        <aside className="reader-panel" aria-label="Marque-pages">
+          <div className="reader-panel-header">
+            <strong>Marque-pages</strong>
+            <button className="icon-button" aria-label="Fermer" onClick={() => setShowBookmarks(false)}>
+              <X size={18} aria-hidden="true" />
+            </button>
+          </div>
+          <div className="bookmark-list">
+            {bookmarks.length > 0 ? (
+              bookmarks.map((bookmark) => (
+                <div key={bookmark.id} className="bookmark-row">
+                  <button onClick={() => void displayBookmark(bookmark)}>
+                    <strong>{bookmark.chapter_label ?? "Position sauvegardee"}</strong>
+                    <span>{Math.round(bookmark.progress_percent ?? 0)}%</span>
+                  </button>
+                  <button
+                    className="icon-button compact-icon"
+                    aria-label="Supprimer le marque-page"
+                    onClick={() => void removeBookmark(bookmark)}
+                  >
+                    <Trash2 size={16} aria-hidden="true" />
+                  </button>
+                </div>
+              ))
+            ) : (
+              <p className="muted-line">Aucun marque-page.</p>
             )}
           </div>
         </aside>

@@ -279,6 +279,24 @@ export type MetadataSearchResponse = {
   total: number;
 };
 
+export type BookmarkItem = {
+  id: string;
+  book_id: string;
+  cfi: string;
+  progress_percent: number | null;
+  chapter_label: string | null;
+  excerpt: string | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+};
+
+export type BookmarkListResponse = {
+  items: BookmarkItem[];
+  total: number;
+};
+
 export async function uploadBook(file: File) {
   const formData = new FormData();
   formData.append("file", file);
@@ -317,6 +335,10 @@ export async function applyBookMetadata(bookId: string, resultId: string, fields
     method: "POST",
     body: JSON.stringify({ result_id: resultId, fields })
   });
+}
+
+export async function listBookBookmarks(bookId: string) {
+  return apiFetch<BookmarkListResponse>(`/books/${bookId}/bookmarks`);
 }
 
 export async function createCollection(payload: { name: string; description?: string | null }) {

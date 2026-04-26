@@ -1471,7 +1471,8 @@ button:disabled {
   color: var(--color-reader-text);
 }
 
-.toc-list {
+.toc-list,
+.bookmark-list {
   min-height: 0;
   overflow-y: auto;
   display: grid;
@@ -1493,6 +1494,46 @@ button:disabled {
 .toc-list button:focus-visible {
   background: rgba(245, 197, 66, 0.1);
   color: var(--color-reader-text);
+  outline: none;
+}
+
+.bookmark-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+}
+
+.bookmark-row > button:first-child {
+  min-height: 46px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text);
+  text-align: left;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px 10px;
+}
+
+.bookmark-row > button:first-child strong,
+.bookmark-row > button:first-child span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bookmark-row > button:first-child span {
+  color: var(--color-reader-text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.bookmark-row > button:first-child:hover,
+.bookmark-row > button:first-child:focus-visible {
+  background: rgba(245, 197, 66, 0.1);
   outline: none;
 }
 

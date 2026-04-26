@@ -86,3 +86,21 @@ class ReadingProgressResponse(BaseModel):
     ok: bool
     resolved: str
     progress: ReadingProgressOut
+
+
+class BookmarkOut(BaseModel):
+    id: UUID
+    book_id: UUID
+    cfi: str
+    progress_percent: float | None = None
+    chapter_label: str | None = None
+    excerpt: str | None = None
+    note: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    deleted_at: datetime | None = None
+
+
+class BookmarkListResponse(BaseModel):
+    items: list[BookmarkOut]
+    total: int

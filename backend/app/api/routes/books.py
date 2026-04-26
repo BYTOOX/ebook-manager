@@ -16,8 +16,10 @@ from app.api.deps import CurrentUser, DbSession
 from app.core.config import get_settings
 from app.models.book import Author, Book, BookAuthor, BookSeries, BookTag, Series, Tag
 from app.models.metadata import MetadataProviderResult
-from app.models.reading import ReadingProgress
+from app.models.reading import Bookmark, ReadingProgress
 from app.schemas.book import (
+    BookmarkListResponse,
+    BookmarkOut,
     BookDetail,
     BookListItem,
     BookListResponse,
@@ -31,6 +33,7 @@ from app.schemas.imports import UploadBookResponse
 from app.schemas.metadata import MetadataApplyPayload, MetadataSearchPayload, MetadataSearchResponse
 from app.services.epub_service import EpubService, clean_metadata_text
 from app.services.import_service import ImportService
+from app.services.bookmark_service import serialize_bookmark
 from app.services.metadata_service import MetadataService
 from app.services.progress_service import apply_reading_progress, serialize_progress
 from app.services.storage_service import StorageService
@@ -378,6 +381,32 @@ def put_book_progress(
     db.commit()
     db.refresh(progress)
     return ReadingProgressResponse(ok=True, resolved=resolved, progress=serialize_progress(progress))
+
+
+@router.get("/{book_id}/bookmarks", response_model=BookmarkListResponse)
+def list_book_bookmarks(
+    book_id: UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> BookmarkListResponse:
+    _get_book_or_404(db, book_id)
+    bookmarks = list(
+        db.scalars(
+            select(Bookmark)
+            .where(
+                Bookmark.user_id == current_user.id,
+                Bookmark.book_id == book_id,
+                Bookmark.deleted_at.is_(None),
+            )
+            .order_by(Bookmark.progress_percent.nulls_last(), Bookmark.created_at.asc())
+        )
+    )
+    items = [
+        BookmarkOut.model_validate(serialized.model_dump())
+        for bookmark in bookmarks
+        if (serialized := serialize_bookmark(bookmark)) is not None
+    ]
+    return BookmarkListResponse(items=items, total=len(items))
 
 
 @router.patch("/{book_id}", response_model=BookDetail)
