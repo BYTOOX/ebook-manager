@@ -108,9 +108,24 @@ Implemented now:
   Settings, Import placeholder, Book detail, Reader placeholder.
 - IndexedDB stores required by the offline-first architecture.
 
+## Phase 2 Scope
+
+Implemented now:
+
+- EPUB upload at `POST /api/v1/books/upload`.
+- EPUB-only validation and configurable upload size limit with `MAX_UPLOAD_SIZE_MB`.
+- SHA-256 file hash and exact duplicate warning.
+- EPUB metadata extraction for title, authors, language, ISBN, publisher, date, description.
+- Cover extraction normalized to `/data/library/books/<book_id>/cover.jpg`.
+- Original EPUB storage at `/data/library/books/<book_id>/original.epub`.
+- Metadata snapshot at `/data/library/books/<book_id>/metadata.json`.
+- `GET /api/v1/books/{book_id}/file` and `/cover`.
+- Import jobs listing.
+- Scan endpoint for `/data/library/incoming`, constrained inside `LIBRARY_PATH`.
+- Import screen wired to upload, scan, feedback states, and recent jobs.
+
 Next phases:
 
-- Phase 2: EPUB upload, validation, hashing, metadata and cover extraction, storage.
 - Phase 3: premium library UI with real imported content.
 - Phase 4: integrated EPUB reader.
 - Phase 5: offline EPUB download/read path.

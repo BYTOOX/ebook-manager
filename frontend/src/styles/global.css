@@ -213,6 +213,15 @@ button:disabled {
   color: var(--color-error);
 }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 .app-shell {
   min-height: 100vh;
   min-height: 100svh;
@@ -592,6 +601,90 @@ button:disabled {
   gap: 12px;
   place-items: start;
   margin-bottom: 14px;
+}
+
+.notice {
+  min-height: 46px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  margin: 14px 0;
+}
+
+.notice.success {
+  border: 1px solid rgba(111, 208, 140, 0.35);
+  background: rgba(111, 208, 140, 0.1);
+  color: var(--color-success);
+}
+
+.notice.error {
+  border: 1px solid rgba(255, 92, 92, 0.35);
+  background: rgba(255, 92, 92, 0.1);
+  color: var(--color-error);
+}
+
+.job-list {
+  display: grid;
+  gap: 10px;
+}
+
+.job-row {
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 3px solid var(--color-text-dim);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 12px;
+}
+
+.job-row.success {
+  border-left-color: var(--color-success);
+}
+
+.job-row.warning {
+  border-left-color: var(--color-warning);
+}
+
+.job-row.failed {
+  border-left-color: var(--color-error);
+}
+
+.job-row div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.job-row strong,
+.job-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-row span,
+.job-row p {
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.job-row p {
+  margin: 0;
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .settings-section {

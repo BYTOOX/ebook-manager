@@ -6,11 +6,11 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
 COPY pyproject.toml ./
+COPY app ./app
 RUN pip install --no-cache-dir .
 
 COPY alembic.ini ./alembic.ini
 COPY alembic ./alembic
-COPY app ./app
 
 EXPOSE 8000
 

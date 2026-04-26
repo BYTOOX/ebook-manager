@@ -1,12 +1,19 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, status
+from pathlib import Path
+from uuid import UUID
+
+from fastapi import APIRouter, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 
 from app.api.deps import CurrentUser, DbSession
+from app.core.config import get_settings
 from app.models.book import Book
 from app.models.reading import ReadingProgress
 from app.schemas.book import BookDetail, BookListItem, BookListResponse
+from app.schemas.imports import UploadBookResponse
+from app.services.import_service import ImportService
 
 router = APIRouter()
 
@@ -47,8 +54,39 @@ def list_books(
     return BookListResponse(items=[serialize_book(book) for book in books], total=total)
 
 
+@router.post("/upload", response_model=UploadBookResponse, status_code=status.HTTP_201_CREATED)
+async def upload_book(
+    file: UploadFile,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> UploadBookResponse:
+    del current_user
+    if not file.filename or not file.filename.lower().endswith(".epub"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only EPUB files are supported")
+
+    service = ImportService(get_settings())
+    try:
+        tmp_path = await service.storage.save_upload_to_tmp(file)
+        job = service.import_epub(
+            db,
+            tmp_path,
+            source="upload",
+            original_filename=file.filename,
+            remove_source=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return UploadBookResponse(
+        job_id=job.id,
+        book_id=job.result_book_id,
+        status=job.status,
+        warning=job.error_message if job.status == "warning" else None,
+    )
+
+
 @router.get("/{book_id}", response_model=BookDetail)
-def get_book(book_id: str, current_user: CurrentUser, db: DbSession) -> BookDetail:
+def get_book(book_id: UUID, current_user: CurrentUser, db: DbSession) -> BookDetail:
     book = db.get(Book, book_id)
     if book is None or book.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
@@ -59,6 +97,35 @@ def get_book(book_id: str, current_user: CurrentUser, db: DbSession) -> BookDeta
             ReadingProgress.book_id == book.id,
         )
     )
+
+
+@router.get("/{book_id}/file")
+def get_book_file(book_id: UUID, current_user: CurrentUser, db: DbSession) -> FileResponse:
+    del current_user
+    book = db.get(Book, book_id)
+    if book is None or book.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
+
+    path = Path(book.file_path)
+    if not path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="EPUB file not found")
+
+    filename = book.original_filename or f"{book.id}.epub"
+    return FileResponse(path, media_type="application/epub+zip", filename=filename)
+
+
+@router.get("/{book_id}/cover")
+def get_book_cover(book_id: UUID, current_user: CurrentUser, db: DbSession) -> FileResponse:
+    del current_user
+    book = db.get(Book, book_id)
+    if book is None or book.deleted_at is not None or not book.cover_path:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cover not found")
+
+    path = Path(book.cover_path)
+    if not path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cover not found")
+
+    return FileResponse(path, media_type="image/jpeg")
     item = serialize_book(
         book,
         float(progress.progress_percent) if progress and progress.progress_percent is not None else None,

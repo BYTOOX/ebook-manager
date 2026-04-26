@@ -86,3 +86,52 @@ export type BookListResponse = {
   items: BookListItem[];
   total: number;
 };
+
+export type ImportJob = {
+  id: string;
+  source: "upload" | "scan" | string;
+  status: "pending" | "running" | "success" | "warning" | "failed" | string;
+  filename: string | null;
+  file_path: string | null;
+  error_message: string | null;
+  result_book_id: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+export type ImportJobsResponse = {
+  items: ImportJob[];
+  total: number;
+};
+
+export type UploadBookResponse = {
+  job_id: string;
+  book_id: string | null;
+  status: string;
+  warning: string | null;
+};
+
+export type ScanResponse = {
+  scanned: number;
+  imported: number;
+  warnings: number;
+  failed: number;
+  jobs: ImportJob[];
+};
+
+export async function uploadBook(file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return apiFetch<UploadBookResponse>("/books/upload", {
+    method: "POST",
+    body: formData
+  });
+}
+
+export async function scanIncoming() {
+  return apiFetch<ScanResponse>("/library/scan", {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+}
