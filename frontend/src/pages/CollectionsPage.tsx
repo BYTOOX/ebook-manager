@@ -1,11 +1,29 @@
-import { BookMarked, Check, FolderPlus, Hash, Layers3, Library, Loader2, Save, Search } from "lucide-react";
+import {
+  AlertTriangle,
+  BookMarked,
+  Check,
+  FolderPlus,
+  Hash,
+  Layers3,
+  Library,
+  Loader2,
+  Pencil,
+  Save,
+  Search,
+  Trash2,
+  X
+} from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import {
   apiFetch,
   createCollection,
   createTag,
+  deleteCollection,
+  deleteTag,
   setCollectionBooks,
+  updateCollection,
+  updateTag,
   type BookListResponse,
   type CollectionDetail,
   type CollectionListResponse,
@@ -16,6 +34,7 @@ import {
 import { BookCard } from "../components/BookCard";
 
 type OrganizationTab = "collections" | "series" | "tags";
+type Notice = { kind: "success" | "error"; text: string };
 
 const tabs: { key: OrganizationTab; label: string }[] = [
   { key: "collections", label: "Collections" },
@@ -30,12 +49,17 @@ export function CollectionsPage() {
   const [selectedSeriesId, setSelectedSeriesId] = useState<string | null>(null);
   const [collectionName, setCollectionName] = useState("");
   const [collectionDescription, setCollectionDescription] = useState("");
+  const [collectionEditName, setCollectionEditName] = useState("");
+  const [collectionEditDescription, setCollectionEditDescription] = useState("");
   const [tagName, setTagName] = useState("");
   const [tagColor, setTagColor] = useState("#f5c542");
+  const [editingTagId, setEditingTagId] = useState<string | null>(null);
+  const [tagEditName, setTagEditName] = useState("");
+  const [tagEditColor, setTagEditColor] = useState("#f5c542");
   const [pickerSearch, setPickerSearch] = useState("");
   const [draftBookIds, setDraftBookIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
 
   const collections = useQuery({
     queryKey: ["organization", "collections"],
@@ -86,6 +110,8 @@ export function CollectionsPage() {
   useEffect(() => {
     if (collectionDetail.data) {
       setDraftBookIds(collectionDetail.data.books.map((book) => book.id));
+      setCollectionEditName(collectionDetail.data.name);
+      setCollectionEditDescription(collectionDetail.data.description ?? "");
     }
   }, [collectionDetail.data]);
 
@@ -100,13 +126,17 @@ export function CollectionsPage() {
     );
   }, [books.data?.items, pickerSearch]);
 
+  function formatError(error: unknown, fallback: string) {
+    return error instanceof Error ? error.message : fallback;
+  }
+
   async function handleCreateCollection() {
     const name = collectionName.trim();
     if (!name || busy) {
       return;
     }
     setBusy(true);
-    setMessage(null);
+    setNotice(null);
     try {
       const created = await createCollection({
         name,
@@ -115,8 +145,10 @@ export function CollectionsPage() {
       setCollectionName("");
       setCollectionDescription("");
       setSelectedCollectionId(created.id);
-      setMessage("Collection creee");
+      setNotice({ kind: "success", text: "Collection creee" });
       await queryClient.invalidateQueries({ queryKey: ["organization", "collections"] });
+    } catch (error) {
+      setNotice({ kind: "error", text: formatError(error, "Creation impossible") });
     } finally {
       setBusy(false);
     }
@@ -127,14 +159,72 @@ export function CollectionsPage() {
       return;
     }
     setBusy(true);
-    setMessage(null);
+    setNotice(null);
     try {
       await setCollectionBooks(selectedCollectionId, draftBookIds);
-      setMessage("Collection mise a jour");
+      setNotice({ kind: "success", text: "Collection mise a jour" });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["organization", "collections"] }),
         queryClient.invalidateQueries({ queryKey: ["organization", "collection", selectedCollectionId] })
       ]);
+    } catch (error) {
+      setNotice({ kind: "error", text: formatError(error, "Mise a jour impossible") });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleUpdateCollection() {
+    if (!selectedCollectionId || busy) {
+      return;
+    }
+    const name = collectionEditName.trim();
+    if (!name) {
+      setNotice({ kind: "error", text: "Le nom de collection est requis" });
+      return;
+    }
+
+    setBusy(true);
+    setNotice(null);
+    try {
+      await updateCollection(selectedCollectionId, {
+        name,
+        description: collectionEditDescription.trim() || null
+      });
+      setNotice({ kind: "success", text: "Collection renommee" });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["organization", "collections"] }),
+        queryClient.invalidateQueries({ queryKey: ["organization", "collection", selectedCollectionId] })
+      ]);
+    } catch (error) {
+      setNotice({ kind: "error", text: formatError(error, "Renommage impossible") });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDeleteCollection() {
+    if (!selectedCollectionId || busy || !window.confirm("Supprimer cette collection ?")) {
+      return;
+    }
+
+    const deletedId = selectedCollectionId;
+    setBusy(true);
+    setNotice(null);
+    try {
+      await deleteCollection(deletedId);
+      const nextCollection = (collections.data?.items ?? []).find((collection) => collection.id !== deletedId);
+      setSelectedCollectionId(nextCollection?.id ?? null);
+      setDraftBookIds([]);
+      setCollectionEditName("");
+      setCollectionEditDescription("");
+      setNotice({ kind: "success", text: "Collection supprimee" });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["organization", "collections"] }),
+        queryClient.removeQueries({ queryKey: ["organization", "collection", deletedId] })
+      ]);
+    } catch (error) {
+      setNotice({ kind: "error", text: formatError(error, "Suppression impossible") });
     } finally {
       setBusy(false);
     }
@@ -146,12 +236,72 @@ export function CollectionsPage() {
       return;
     }
     setBusy(true);
-    setMessage(null);
+    setNotice(null);
     try {
       await createTag({ name, color: tagColor });
       setTagName("");
-      setMessage("Tag cree");
+      setNotice({ kind: "success", text: "Tag cree" });
       await queryClient.invalidateQueries({ queryKey: ["organization", "tags"] });
+    } catch (error) {
+      setNotice({ kind: "error", text: formatError(error, "Creation impossible") });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function startEditTag(tag: { id: string; name: string; color: string | null }) {
+    setEditingTagId(tag.id);
+    setTagEditName(tag.name);
+    setTagEditColor(tag.color ?? "#f5c542");
+    setNotice(null);
+  }
+
+  async function handleUpdateTag() {
+    if (!editingTagId || busy) {
+      return;
+    }
+    const name = tagEditName.trim();
+    if (!name) {
+      setNotice({ kind: "error", text: "Le nom du tag est requis" });
+      return;
+    }
+
+    setBusy(true);
+    setNotice(null);
+    try {
+      await updateTag(editingTagId, { name, color: tagEditColor });
+      setEditingTagId(null);
+      setNotice({ kind: "success", text: "Tag mis a jour" });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["organization", "tags"] }),
+        queryClient.invalidateQueries({ queryKey: ["books"] })
+      ]);
+    } catch (error) {
+      setNotice({ kind: "error", text: formatError(error, "Mise a jour impossible") });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDeleteTag(tagId: string) {
+    if (busy || !window.confirm("Supprimer ce tag ?")) {
+      return;
+    }
+
+    setBusy(true);
+    setNotice(null);
+    try {
+      await deleteTag(tagId);
+      if (editingTagId === tagId) {
+        setEditingTagId(null);
+      }
+      setNotice({ kind: "success", text: "Tag supprime" });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["organization", "tags"] }),
+        queryClient.invalidateQueries({ queryKey: ["books"] })
+      ]);
+    } catch (error) {
+      setNotice({ kind: "error", text: formatError(error, "Suppression impossible") });
     } finally {
       setBusy(false);
     }
@@ -202,10 +352,14 @@ export function CollectionsPage() {
         ))}
       </div>
 
-      {message && (
-        <p className="notice success">
-          <Check size={16} aria-hidden="true" />
-          {message}
+      {notice && (
+        <p className={`notice ${notice.kind}`}>
+          {notice.kind === "success" ? (
+            <Check size={16} aria-hidden="true" />
+          ) : (
+            <AlertTriangle size={16} aria-hidden="true" />
+          )}
+          {notice.text}
         </p>
       )}
 
@@ -255,6 +409,42 @@ export function CollectionsPage() {
               <Library size={18} aria-hidden="true" />
               <h2>{collectionDetail.data?.name ?? "Livres"}</h2>
             </div>
+            {selectedCollectionId && (
+              <div className="collection-editor">
+                <label>
+                  <span>Nom</span>
+                  <input
+                    value={collectionEditName}
+                    onChange={(event) => setCollectionEditName(event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>Description</span>
+                  <input
+                    value={collectionEditDescription}
+                    onChange={(event) => setCollectionEditDescription(event.target.value)}
+                  />
+                </label>
+                <div className="action-row">
+                  <button
+                    className="secondary-action"
+                    onClick={() => void handleDeleteCollection()}
+                    disabled={busy}
+                  >
+                    <Trash2 size={18} aria-hidden="true" />
+                    Supprimer
+                  </button>
+                  <button
+                    className="primary-action"
+                    onClick={() => void handleUpdateCollection()}
+                    disabled={busy || !collectionEditName.trim()}
+                  >
+                    {busy ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Save size={18} aria-hidden="true" />}
+                    Sauver
+                  </button>
+                </div>
+              </div>
+            )}
             <label className="search-field compact-search">
               <Search size={18} aria-hidden="true" />
               <input value={pickerSearch} placeholder="Titre ou auteur" onChange={(event) => setPickerSearch(event.target.value)} />
@@ -328,7 +518,15 @@ export function CollectionsPage() {
             </label>
             <label>
               <span>Couleur</span>
-              <input value={tagColor} onChange={(event) => setTagColor(event.target.value)} />
+              <div className="color-input-row">
+                <input
+                  aria-label="Couleur du tag"
+                  type="color"
+                  value={tagColor}
+                  onChange={(event) => setTagColor(event.target.value)}
+                />
+                <input value={tagColor} onChange={(event) => setTagColor(event.target.value)} />
+              </div>
             </label>
             <button className="primary-action wide" onClick={() => void handleCreateTag()} disabled={busy || !tagName.trim()}>
               {busy ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Hash size={18} aria-hidden="true" />}
@@ -342,10 +540,67 @@ export function CollectionsPage() {
             </div>
             <div className="tag-grid">
               {(tags.data?.items ?? []).map((tag) => (
-                <div key={tag.id} className="tag-item">
-                  <span className="tag-swatch" style={{ background: tag.color ?? "#f5c542" }} />
-                  <strong>{tag.name}</strong>
-                  <span>{tag.book_count}</span>
+                <div key={tag.id} className={editingTagId === tag.id ? "tag-item tag-item-editing" : "tag-item"}>
+                  {editingTagId === tag.id ? (
+                    <>
+                      <label>
+                        <span>Nom</span>
+                        <input value={tagEditName} onChange={(event) => setTagEditName(event.target.value)} />
+                      </label>
+                      <label>
+                        <span>Couleur</span>
+                        <div className="color-input-row">
+                          <input
+                            aria-label="Couleur du tag"
+                            type="color"
+                            value={tagEditColor}
+                            onChange={(event) => setTagEditColor(event.target.value)}
+                          />
+                          <input value={tagEditColor} onChange={(event) => setTagEditColor(event.target.value)} />
+                        </div>
+                      </label>
+                      <div className="row-actions">
+                        <button className="icon-button" aria-label="Annuler" onClick={() => setEditingTagId(null)}>
+                          <X size={18} aria-hidden="true" />
+                        </button>
+                        <button
+                          className="icon-button"
+                          aria-label="Supprimer le tag"
+                          onClick={() => void handleDeleteTag(tag.id)}
+                          disabled={busy}
+                        >
+                          <Trash2 size={18} aria-hidden="true" />
+                        </button>
+                        <button
+                          className="icon-button active"
+                          aria-label="Sauver le tag"
+                          onClick={() => void handleUpdateTag()}
+                          disabled={busy || !tagEditName.trim()}
+                        >
+                          {busy ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Save size={18} aria-hidden="true" />}
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <span className="tag-swatch" style={{ background: tag.color ?? "#f5c542" }} />
+                      <strong>{tag.name}</strong>
+                      <span className="tag-count">{tag.book_count}</span>
+                      <div className="row-actions">
+                        <button className="icon-button" aria-label="Modifier le tag" onClick={() => startEditTag(tag)}>
+                          <Pencil size={17} aria-hidden="true" />
+                        </button>
+                        <button
+                          className="icon-button"
+                          aria-label="Supprimer le tag"
+                          onClick={() => void handleDeleteTag(tag.id)}
+                          disabled={busy}
+                        >
+                          <Trash2 size={17} aria-hidden="true" />
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               ))}
               {!tags.isLoading && tagCount === 0 && <p className="muted-line">Aucun tag.</p>}

@@ -274,6 +274,19 @@ export async function createCollection(payload: { name: string; description?: st
   });
 }
 
+export async function updateCollection(collectionId: string, payload: { name: string; description?: string | null }) {
+  return apiFetch<CollectionDetail>(`/organization/collections/${collectionId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function deleteCollection(collectionId: string) {
+  return apiFetch<void>(`/organization/collections/${collectionId}`, {
+    method: "DELETE"
+  });
+}
+
 export async function setCollectionBooks(collectionId: string, bookIds: string[]) {
   return apiFetch<CollectionDetail>(`/organization/collections/${collectionId}/books`, {
     method: "PUT",
@@ -285,5 +298,18 @@ export async function createTag(payload: { name: string; color?: string | null }
   return apiFetch<TagSummary>("/organization/tags", {
     method: "POST",
     body: JSON.stringify(payload)
+  });
+}
+
+export async function updateTag(tagId: string, payload: { name: string; color?: string | null }) {
+  return apiFetch<TagSummary>(`/organization/tags/${tagId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function deleteTag(tagId: string) {
+  return apiFetch<void>(`/organization/tags/${tagId}`, {
+    method: "DELETE"
   });
 }
