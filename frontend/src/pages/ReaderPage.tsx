@@ -43,6 +43,12 @@ type ReaderSettings = {
   fontFamily: string;
 };
 
+type CachedReaderSettings = Partial<ReaderSettings> & {
+  dirty?: boolean;
+  local_updated_at?: string;
+  server_updated_at?: string;
+};
+
 type TocEntry = NavItem & {
   depth: number;
 };
@@ -82,6 +88,36 @@ const fontOptions = [
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+function readerSettingsFromCache(value: unknown): { settings: ReaderSettings; dirty: boolean } | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const cached = value as CachedReaderSettings;
+  return {
+    settings: {
+      mode: cached.mode === "scroll" ? "scroll" : "paged",
+      fontSize: clamp(Number(cached.fontSize) || DEFAULT_SETTINGS.fontSize, 86, 146),
+      lineHeight: clamp(Number(cached.lineHeight) || DEFAULT_SETTINGS.lineHeight, 1.35, 2.2),
+      margin: clamp(Number(cached.margin) || DEFAULT_SETTINGS.margin, 8, 56),
+      fontFamily: typeof cached.fontFamily === "string" ? cached.fontFamily : DEFAULT_SETTINGS.fontFamily
+    },
+    dirty: Boolean(cached.dirty)
+  };
+}
+
+async function cacheReaderSettings(settings: ReaderSettings, dirty: boolean, updatedAt = new Date().toISOString()) {
+  await db.settings_cache.put({
+    key: SETTINGS_KEY,
+    value: {
+      ...settings,
+      dirty,
+      local_updated_at: updatedAt,
+      server_updated_at: dirty ? undefined : updatedAt
+    },
+    updated_at: updatedAt
+  });
 }
 
 function serverToReaderSettings(settings: ServerReadingSettings): ReaderSettings {
@@ -425,20 +461,28 @@ export function ReaderPage() {
     let alive = true;
     async function hydrateSettings() {
       let nextSettings = DEFAULT_SETTINGS;
+      let settingsDirty = false;
       const cached = await db.settings_cache.get(SETTINGS_KEY);
-      if (cached && typeof cached.value === "object" && cached.value !== null) {
-        nextSettings = { ...DEFAULT_SETTINGS, ...(cached.value as Partial<ReaderSettings>) };
+      const cachedSettings = readerSettingsFromCache(cached?.value);
+      if (cachedSettings) {
+        nextSettings = cachedSettings.settings;
+        settingsDirty = cachedSettings.dirty;
       }
 
       if (navigator.onLine) {
-        const serverSettings = await getReadingSettings().catch(() => null);
-        if (serverSettings) {
-          nextSettings = serverToReaderSettings(serverSettings);
-          await db.settings_cache.put({
-            key: SETTINGS_KEY,
-            value: nextSettings,
-            updated_at: serverSettings.updated_at
-          });
+        if (settingsDirty) {
+          const pushedSettings = await updateReadingSettings(readerToServerSettings(nextSettings)).catch(() => null);
+          if (pushedSettings) {
+            nextSettings = serverToReaderSettings(pushedSettings);
+            settingsDirty = false;
+            await cacheReaderSettings(nextSettings, false, pushedSettings.updated_at);
+          }
+        } else {
+          const serverSettings = await getReadingSettings().catch(() => null);
+          if (serverSettings) {
+            nextSettings = serverToReaderSettings(serverSettings);
+            await cacheReaderSettings(nextSettings, false, serverSettings.updated_at);
+          }
         }
       }
 
@@ -472,7 +516,9 @@ export function ReaderPage() {
       if (!navigator.onLine) {
         return;
       }
-      void updateReadingSettings(readerToServerSettings(settings)).catch(() => undefined);
+      void updateReadingSettings(readerToServerSettings(settings))
+        .then((serverSettings) => cacheReaderSettings(serverToReaderSettings(serverSettings), false, serverSettings.updated_at))
+        .catch(() => undefined);
     };
     window.addEventListener("online", syncCurrentSettings);
     return () => window.removeEventListener("online", syncCurrentSettings);
@@ -482,11 +528,8 @@ export function ReaderPage() {
     if (!settingsReady) {
       return;
     }
-    void db.settings_cache.put({
-      key: SETTINGS_KEY,
-      value: settings,
-      updated_at: new Date().toISOString()
-    });
+    const updatedAt = new Date().toISOString();
+    void cacheReaderSettings(settings, !navigator.onLine, updatedAt);
     if (renditionRef.current) {
       applyReaderTheme(renditionRef.current, settings);
     }
@@ -501,7 +544,9 @@ export function ReaderPage() {
       window.clearTimeout(settingsSaveTimerRef.current);
     }
     settingsSaveTimerRef.current = window.setTimeout(() => {
-      void updateReadingSettings(readerToServerSettings(settings)).catch(() => undefined);
+      void updateReadingSettings(readerToServerSettings(settings))
+        .then((serverSettings) => cacheReaderSettings(serverToReaderSettings(serverSettings), false, serverSettings.updated_at))
+        .catch(() => cacheReaderSettings(settings, true));
     }, 800);
     return () => {
       if (settingsSaveTimerRef.current) {
