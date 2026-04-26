@@ -5,6 +5,7 @@ import re
 from decimal import Decimal
 from difflib import SequenceMatcher
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 from sqlalchemy.orm import Session
@@ -160,9 +161,17 @@ class MetadataService:
     def _normalize_googlebook(self, item: dict[str, Any]) -> dict[str, Any]:
         info = item.get("volumeInfo") if isinstance(item.get("volumeInfo"), dict) else {}
         image_links = info.get("imageLinks") if isinstance(info.get("imageLinks"), dict) else {}
-        cover_url = _string_or_none(image_links.get("thumbnail") or image_links.get("smallThumbnail"))
+        cover_url = _first_string(
+            [
+                image_links.get("extraLarge"),
+                image_links.get("large"),
+                image_links.get("medium"),
+                image_links.get("thumbnail"),
+                image_links.get("smallThumbnail"),
+            ]
+        )
         if cover_url:
-            cover_url = cover_url.replace("http://", "https://", 1)
+            cover_url = _upgrade_google_cover_url(cover_url.replace("http://", "https://", 1))
         return {
             "provider": "googlebooks",
             "provider_item_id": _string_or_none(item.get("id")),
@@ -290,3 +299,12 @@ def _author_score(book_authors: list[str], candidate_authors: list[Any]) -> floa
         for candidate_author in candidate_authors
     ]
     return max(ratios, default=0.0)
+
+
+def _upgrade_google_cover_url(url: str) -> str:
+    parsed = urlsplit(url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    if parsed.netloc.endswith("google.com") and parsed.path.startswith("/books/content"):
+        query["zoom"] = "0"
+        query.pop("edge", None)
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment))

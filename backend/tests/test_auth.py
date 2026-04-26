@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from PIL import Image  # noqa: E402
 
 from app.core.database import Base, SessionLocal, engine  # noqa: E402
+from app.core.config import get_settings  # noqa: E402
 from app.main import app  # noqa: E402
 from app import models  # noqa: F401, E402
 from app.models.metadata import MetadataProviderResult  # noqa: E402
@@ -660,6 +661,30 @@ def test_metadata_apply_cover_replaces_file_and_bumps_cover_url(monkeypatch) -> 
     with Image.open(BytesIO(cover_response.content)) as image:
         red, _green, blue = image.convert("RGB").getpixel((0, 0))
     assert blue > red
+
+
+def test_google_books_cover_url_prefers_high_resolution_without_page_curl() -> None:
+    service = MetadataService(get_settings())
+    normalized = service._normalize_googlebook(
+        {
+            "id": "gb-cover",
+            "volumeInfo": {
+                "title": "Cover test",
+                "imageLinks": {
+                    "extraLarge": "http://books.google.com/books/content?id=abc&printsec=frontcover&img=1&zoom=3",
+                    "thumbnail": (
+                        "http://books.google.com/books/content?id=tiny&printsec=frontcover"
+                        "&img=1&zoom=1&edge=curl&source=gbs_api"
+                    )
+                },
+            },
+        }
+    )
+
+    assert normalized["cover_url"].startswith("https://books.google.com/books/content")
+    assert "id=abc" in normalized["cover_url"]
+    assert "zoom=0" in normalized["cover_url"]
+    assert "edge=curl" not in normalized["cover_url"]
 
 
 def test_organization_collections_series_and_tags() -> None:

@@ -1175,6 +1175,7 @@ button:disabled {
   color: var(--color-text);
   padding: 10px;
   text-align: left;
+  cursor: pointer;
 }
 
 .metadata-candidate.active {
@@ -1222,6 +1223,13 @@ button:disabled {
   color: var(--color-accent);
   font-size: 12px;
   font-weight: 800;
+}
+
+.metadata-cover-action {
+  width: fit-content;
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 13px;
 }
 
 .metadata-apply-panel {

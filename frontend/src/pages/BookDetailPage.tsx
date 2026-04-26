@@ -99,6 +99,14 @@ function fieldsAvailable(candidate: MetadataCandidate) {
     .map((field) => field.key);
 }
 
+function versionedCoverUrl(url: string | null, revision: number) {
+  if (!url || revision === 0) {
+    return url;
+  }
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}ui=${revision}`;
+}
+
 export function BookDetailPage() {
   const { bookId } = useParams();
   const queryClient = useQueryClient();
@@ -307,16 +315,20 @@ export function BookDetailPage() {
     );
   }
 
-  async function applyProviderFields(fields: MetadataApplyField[]) {
-    if (!data || !selectedCandidateId || fields.length === 0 || providerBusy) {
+  async function applyProviderFields(fields: MetadataApplyField[], candidateId = selectedCandidateId) {
+    if (!data || !candidateId || fields.length === 0 || providerBusy) {
       return;
     }
     setProviderBusy(true);
     setProviderError(null);
     setProviderMessage(null);
     try {
-      const updated = await applyBookMetadata(data.id, selectedCandidateId, fields);
+      const updated = await applyBookMetadata(data.id, candidateId, fields);
       queryClient.setQueryData(["book", bookId], updated);
+      if (fields.includes("cover")) {
+        setCoverObjectUrl(null);
+        setCoverRevision((current) => current + 1);
+      }
       if (await refreshOfflineBookMetadata(updated)) {
         setCoverRevision((current) => current + 1);
       }
@@ -337,11 +349,16 @@ export function BookDetailPage() {
     await applyProviderFields(["cover"]);
   }
 
+  async function handleCandidateCoverApply(candidate: MetadataCandidate) {
+    handleSelectCandidate(candidate);
+    await applyProviderFields(["cover"], candidate.id);
+  }
+
   if (!data) {
     return <main className="page"><div className="skeleton tall" /></main>;
   }
 
-  const coverUrl = coverObjectUrl ?? data.cover_url;
+  const coverUrl = coverObjectUrl ?? versionedCoverUrl(data.cover_url, coverRevision);
   const selectedCandidate = metadataCandidates.find((candidate) => candidate.id === selectedCandidateId) ?? null;
 
   return (
@@ -493,10 +510,18 @@ export function BookDetailPage() {
             {metadataCandidates.length > 0 && (
               <div className="metadata-candidate-list">
                 {metadataCandidates.map((candidate) => (
-                  <button
+                  <div
                     key={candidate.id}
                     className={selectedCandidateId === candidate.id ? "metadata-candidate active" : "metadata-candidate"}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => handleSelectCandidate(candidate)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        handleSelectCandidate(candidate);
+                      }
+                    }}
                   >
                     <span className="metadata-candidate-cover">
                       {candidate.cover_url ? <img src={candidate.cover_url} alt="" loading="lazy" /> : <Sparkles size={24} aria-hidden="true" />}
@@ -508,8 +533,21 @@ export function BookDetailPage() {
                         {providerLabels[candidate.provider]} - {Math.round(candidate.score * 100)}%
                       </span>
                       {candidate.publisher && <small>{candidate.publisher}</small>}
+                      {candidate.cover_url && (
+                        <button
+                          className="secondary-action metadata-cover-action"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void handleCandidateCoverApply(candidate);
+                          }}
+                          disabled={providerBusy}
+                        >
+                          {providerBusy ? <Loader2 className="spin" size={16} aria-hidden="true" /> : <Download size={16} aria-hidden="true" />}
+                          Prendre
+                        </button>
+                      )}
                     </span>
-                  </button>
+                  </div>
                 ))}
               </div>
             )}
