@@ -244,6 +244,41 @@ export type TagListResponse = {
   total: number;
 };
 
+export type MetadataProvider = "openlibrary" | "googlebooks";
+
+export type MetadataApplyField =
+  | "title"
+  | "subtitle"
+  | "authors"
+  | "description"
+  | "language"
+  | "isbn"
+  | "publisher"
+  | "published_date"
+  | "cover";
+
+export type MetadataCandidate = {
+  id: string;
+  provider: MetadataProvider;
+  provider_item_id: string | null;
+  score: number;
+  title: string;
+  subtitle: string | null;
+  authors: string[];
+  description: string | null;
+  language: string | null;
+  isbn: string | null;
+  publisher: string | null;
+  published_date: string | null;
+  cover_url: string | null;
+  raw: Record<string, unknown>;
+};
+
+export type MetadataSearchResponse = {
+  items: MetadataCandidate[];
+  total: number;
+};
+
 export async function uploadBook(file: File) {
   const formData = new FormData();
   formData.append("file", file);
@@ -264,6 +299,23 @@ export async function updateBook(bookId: string, payload: BookUpdate) {
   return apiFetch<BookDetail>(`/books/${bookId}`, {
     method: "PATCH",
     body: JSON.stringify(payload)
+  });
+}
+
+export async function searchBookMetadata(
+  bookId: string,
+  payload: { providers?: MetadataProvider[]; query?: string | null; isbn?: string | null }
+) {
+  return apiFetch<MetadataSearchResponse>(`/books/${bookId}/metadata/search`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function applyBookMetadata(bookId: string, resultId: string, fields: MetadataApplyField[]) {
+  return apiFetch<BookDetail>(`/books/${bookId}/metadata/apply`, {
+    method: "POST",
+    body: JSON.stringify({ result_id: resultId, fields })
   });
 }
 

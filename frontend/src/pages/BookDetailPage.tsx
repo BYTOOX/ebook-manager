@@ -1,8 +1,31 @@
-import { BookOpen, Check, Download, FileText, Loader2, Pencil, Play, Save, Star, Trash2, Users, X } from "lucide-react";
+import {
+  BookOpen,
+  Check,
+  Download,
+  FileText,
+  Loader2,
+  Pencil,
+  Play,
+  Save,
+  Search,
+  Sparkles,
+  Star,
+  Trash2,
+  Users,
+  X
+} from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { apiFetch, updateBook, type BookDetail } from "../lib/api";
+import {
+  apiFetch,
+  applyBookMetadata,
+  searchBookMetadata,
+  updateBook,
+  type BookDetail,
+  type MetadataApplyField,
+  type MetadataCandidate
+} from "../lib/api";
 import { BookCard } from "../components/BookCard";
 import {
   downloadBookForOffline,
@@ -27,6 +50,54 @@ function formatBytes(size: number | null) {
   return `${value.toFixed(unit === 0 ? 0 : 1)} ${suffix}`;
 }
 
+const providerLabels: Record<MetadataCandidate["provider"], string> = {
+  openlibrary: "Open Library",
+  googlebooks: "Google Books"
+};
+
+const metadataApplyFields: { key: MetadataApplyField; label: string }[] = [
+  { key: "title", label: "Titre" },
+  { key: "subtitle", label: "Sous-titre" },
+  { key: "authors", label: "Auteurs" },
+  { key: "description", label: "Description" },
+  { key: "language", label: "Langue" },
+  { key: "isbn", label: "ISBN" },
+  { key: "publisher", label: "Editeur" },
+  { key: "published_date", label: "Date" },
+  { key: "cover", label: "Couverture" }
+];
+
+function candidateValue(candidate: MetadataCandidate, field: MetadataApplyField) {
+  if (field === "authors") {
+    return candidate.authors.join(", ");
+  }
+  if (field === "cover") {
+    return candidate.cover_url ? "Image provider" : "";
+  }
+  const value = candidate[field];
+  return typeof value === "string" ? value : "";
+}
+
+function currentValue(book: BookDetail, field: MetadataApplyField) {
+  if (field === "authors") {
+    return book.authors.join(", ");
+  }
+  if (field === "cover") {
+    return book.cover_url ? "Couverture locale" : "Vide";
+  }
+  if (field === "description") {
+    return book.description ?? "";
+  }
+  const value = book[field];
+  return typeof value === "string" ? value : "";
+}
+
+function fieldsAvailable(candidate: MetadataCandidate) {
+  return metadataApplyFields
+    .filter((field) => candidateValue(candidate, field.key))
+    .map((field) => field.key);
+}
+
 export function BookDetailPage() {
   const { bookId } = useParams();
   const queryClient = useQueryClient();
@@ -47,6 +118,14 @@ export function BookDetailPage() {
     rating: "",
     favorite: false
   });
+  const [providerPanelOpen, setProviderPanelOpen] = useState(false);
+  const [providerBusy, setProviderBusy] = useState(false);
+  const [providerError, setProviderError] = useState<string | null>(null);
+  const [providerMessage, setProviderMessage] = useState<string | null>(null);
+  const [providerQuery, setProviderQuery] = useState("");
+  const [metadataCandidates, setMetadataCandidates] = useState<MetadataCandidate[]>([]);
+  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
+  const [selectedFields, setSelectedFields] = useState<MetadataApplyField[]>([]);
   const { data } = useQuery({
     queryKey: ["book", bookId],
     queryFn: async () => {
@@ -118,6 +197,7 @@ export function BookDetailPage() {
       rating: data.rating?.toString() ?? "",
       favorite: data.favorite
     });
+    setProviderQuery((current) => current || [data.title, data.authors[0]].filter(Boolean).join(" "));
   }, [data]);
 
   async function handleOfflineDownload() {
@@ -186,11 +266,67 @@ export function BookDetailPage() {
     }
   }
 
+  async function handleProviderSearch() {
+    if (!data || providerBusy) {
+      return;
+    }
+    setProviderBusy(true);
+    setProviderError(null);
+    setProviderMessage(null);
+    try {
+      const response = await searchBookMetadata(data.id, {
+        providers: ["openlibrary", "googlebooks"],
+        query: providerQuery.trim() || null,
+        isbn: data.isbn
+      });
+      setMetadataCandidates(response.items);
+      const first = response.items[0] ?? null;
+      setSelectedCandidateId(first?.id ?? null);
+      setSelectedFields(first ? fieldsAvailable(first) : []);
+      setProviderMessage(response.total ? `${response.total} proposition(s)` : "Aucune proposition");
+    } catch (caught) {
+      setProviderError(caught instanceof Error ? caught.message : "Recherche metadata impossible");
+    } finally {
+      setProviderBusy(false);
+    }
+  }
+
+  function handleSelectCandidate(candidate: MetadataCandidate) {
+    setSelectedCandidateId(candidate.id);
+    setSelectedFields(fieldsAvailable(candidate));
+  }
+
+  function toggleSelectedField(field: MetadataApplyField) {
+    setSelectedFields((current) =>
+      current.includes(field) ? current.filter((item) => item !== field) : [...current, field]
+    );
+  }
+
+  async function handleProviderApply() {
+    if (!data || !selectedCandidateId || selectedFields.length === 0 || providerBusy) {
+      return;
+    }
+    setProviderBusy(true);
+    setProviderError(null);
+    setProviderMessage(null);
+    try {
+      const updated = await applyBookMetadata(data.id, selectedCandidateId, selectedFields);
+      queryClient.setQueryData(["book", bookId], updated);
+      await queryClient.invalidateQueries({ queryKey: ["books"] });
+      setProviderMessage("Metadonnees appliquees");
+    } catch (caught) {
+      setProviderError(caught instanceof Error ? caught.message : "Application metadata impossible");
+    } finally {
+      setProviderBusy(false);
+    }
+  }
+
   if (!data) {
     return <main className="page"><div className="skeleton tall" /></main>;
   }
 
   const coverUrl = coverObjectUrl ?? data.cover_url;
+  const selectedCandidate = metadataCandidates.find((candidate) => candidate.id === selectedCandidateId) ?? null;
 
   return (
     <main className="book-detail">
@@ -232,6 +368,10 @@ export function BookDetailPage() {
           <button className="secondary-action" onClick={() => setEditing((value) => !value)}>
             {editing ? <X size={18} aria-hidden="true" /> : <Pencil size={18} aria-hidden="true" />}
             {editing ? "Annuler" : "Modifier"}
+          </button>
+          <button className="secondary-action" onClick={() => setProviderPanelOpen((value) => !value)}>
+            {providerPanelOpen ? <X size={18} aria-hidden="true" /> : <Sparkles size={18} aria-hidden="true" />}
+            {providerPanelOpen ? "Fermer" : "Enrichir"}
           </button>
         </div>
         {offlineError && <p className="form-error">{offlineError}</p>}
@@ -310,6 +450,89 @@ export function BookDetailPage() {
               {metadataBusy ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Save size={18} aria-hidden="true" />}
               Enregistrer
             </button>
+          </section>
+        )}
+        {providerPanelOpen && (
+          <section className="metadata-band metadata-provider-panel" aria-label="Recherche metadonnees">
+            <div className="metadata-heading">
+              <Sparkles size={18} aria-hidden="true" />
+              <h2>Metadonnees externes</h2>
+            </div>
+            <div className="metadata-provider-search">
+              <label className="search-field compact-search">
+                <Search size={18} aria-hidden="true" />
+                <input
+                  value={providerQuery}
+                  placeholder="Titre, auteur ou ISBN"
+                  onChange={(event) => setProviderQuery(event.target.value)}
+                />
+              </label>
+              <button className="primary-action" onClick={() => void handleProviderSearch()} disabled={providerBusy}>
+                {providerBusy ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Search size={18} aria-hidden="true" />}
+                Rechercher
+              </button>
+            </div>
+            {providerError && <p className="notice error">{providerError}</p>}
+            {providerMessage && <p className="notice success">{providerMessage}</p>}
+            {metadataCandidates.length > 0 && (
+              <div className="metadata-candidate-list">
+                {metadataCandidates.map((candidate) => (
+                  <button
+                    key={candidate.id}
+                    className={selectedCandidateId === candidate.id ? "metadata-candidate active" : "metadata-candidate"}
+                    onClick={() => handleSelectCandidate(candidate)}
+                  >
+                    <span className="metadata-candidate-cover">
+                      {candidate.cover_url ? <img src={candidate.cover_url} alt="" loading="lazy" /> : <Sparkles size={24} aria-hidden="true" />}
+                    </span>
+                    <span className="metadata-candidate-body">
+                      <strong>{candidate.title}</strong>
+                      <small>{candidate.authors.join(", ") || "Auteur inconnu"}</small>
+                      <span>
+                        {providerLabels[candidate.provider]} - {Math.round(candidate.score * 100)}%
+                      </span>
+                      {candidate.publisher && <small>{candidate.publisher}</small>}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {selectedCandidate && (
+              <div className="metadata-apply-panel">
+                <div className="metadata-heading">
+                  <Check size={18} aria-hidden="true" />
+                  <h2>Appliquer</h2>
+                </div>
+                <div className="metadata-field-list">
+                  {metadataApplyFields.map((field) => {
+                    const next = candidateValue(selectedCandidate, field.key);
+                    return (
+                      <label key={field.key} className={next ? "metadata-field-row" : "metadata-field-row disabled"}>
+                        <input
+                          type="checkbox"
+                          disabled={!next}
+                          checked={Boolean(next) && selectedFields.includes(field.key)}
+                          onChange={() => toggleSelectedField(field.key)}
+                        />
+                        <span>
+                          <strong>{field.label}</strong>
+                          <small>{currentValue(data, field.key) || "Vide"}</small>
+                          <small>{next || "Non fourni"}</small>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <button
+                  className="primary-action wide"
+                  onClick={() => void handleProviderApply()}
+                  disabled={providerBusy || selectedFields.length === 0}
+                >
+                  {providerBusy ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Save size={18} aria-hidden="true" />}
+                  Appliquer la selection
+                </button>
+              </div>
+            )}
           </section>
         )}
         {data.description && <p className="description">{data.description}</p>}

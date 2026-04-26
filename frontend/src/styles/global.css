@@ -1131,6 +1131,120 @@ button:disabled {
   gap: 10px;
 }
 
+.metadata-provider-search {
+  display: grid;
+  gap: 10px;
+}
+
+.metadata-candidate-list,
+.metadata-field-list,
+.metadata-apply-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.metadata-candidate {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--color-text);
+  padding: 10px;
+  text-align: left;
+}
+
+.metadata-candidate.active {
+  border-color: var(--color-line);
+  background: rgba(245, 197, 66, 0.1);
+}
+
+.metadata-candidate-cover {
+  width: 50px;
+  aspect-ratio: 0.68;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--color-bg);
+  color: var(--color-accent);
+}
+
+.metadata-candidate-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.metadata-candidate-body {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.metadata-candidate-body strong,
+.metadata-candidate-body small,
+.metadata-candidate-body span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metadata-candidate-body small {
+  color: var(--color-text-muted);
+}
+
+.metadata-candidate-body span {
+  color: var(--color-accent);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.metadata-apply-panel {
+  padding-top: 12px;
+  border-top: 1px solid rgba(245, 197, 66, 0.14);
+}
+
+.metadata-field-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 10px 0;
+}
+
+.metadata-field-row input {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: var(--color-accent);
+}
+
+.metadata-field-row span {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.metadata-field-row small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-muted);
+}
+
+.metadata-field-row small:last-child {
+  color: var(--color-text);
+}
+
+.metadata-field-row.disabled {
+  opacity: 0.52;
+}
+
 .checkbox-line {
   grid-template-columns: auto 1fr;
   align-items: center;
@@ -1440,5 +1554,10 @@ button:disabled {
 
   .organization-wide {
     grid-column: span 2;
+  }
+
+  .metadata-provider-search {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
   }
 }
