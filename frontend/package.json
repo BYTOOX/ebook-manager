@@ -1,0 +1,30 @@
+{
+  "name": "aurelia-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 3000",
+    "build": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 3000",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json --pretty && tsc --noEmit -p tsconfig.node.json --pretty"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.29.0",
+    "dexie": "^4.0.4",
+    "lucide-react": "^0.468.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.23.0",
+    "zustand": "^4.5.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "@types/react": "^18.2.79",
+    "@types/react-dom": "^18.2.25",
+    "@vitejs/plugin-react": "^4.2.1",
+    "typescript": "^5.4.5",
+    "vite": "^5.2.10",
+    "vite-plugin-pwa": "^0.19.8"
+  }
+}
