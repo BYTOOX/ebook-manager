@@ -91,7 +91,7 @@ export function ImportPage() {
       <section className="quiet-panel">
         <FolderSearch size={22} aria-hidden="true" />
         <h2>Scan incoming</h2>
-        <p>Le dossier `/data/library/incoming` est scanne recursivement cote serveur.</p>
+        <p>Tous les fichiers EPUB sont scannes recursivement, peu importe le nom des dossiers ou fichiers.</p>
         <button className="secondary-action" disabled={busy} onClick={() => scanMutation.mutate()}>
           {scanMutation.isPending ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <FolderSearch size={18} aria-hidden="true" />}
           Scanner

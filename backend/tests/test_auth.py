@@ -124,7 +124,49 @@ def test_scan_imports_epubs_recursively_from_series_folders() -> None:
     assert books.json()["items"][0]["title"] == "Aurelia Phase Two"
 
 
-def make_test_epub() -> bytes:
+def test_scan_imports_every_epub_recursively_regardless_of_naming() -> None:
+    client = TestClient(app)
+    client.post(
+        "/api/v1/auth/setup",
+        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
+    )
+
+    incoming = TEST_LIBRARY_PATH / "incoming"
+    files = {
+        incoming / "Loose Book.EPUB": make_test_epub("Loose Book", "9780000000101"),
+        incoming / "Auteurs divers" / "Anthologie bizarre.epub": make_test_epub(
+            "Anthologie bizarre", "9780000000102"
+        ),
+        incoming / "Serie X" / "Sous-cycle" / "vol_003-final.epub": make_test_epub(
+            "Volume Final", "9780000000103"
+        ),
+    }
+    for path, content in files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+
+    scan = client.post("/api/v1/library/scan", json={})
+    assert scan.status_code == 200
+    payload = scan.json()
+    assert payload["scanned"] == 3
+    assert payload["imported"] == 3
+    assert {job["filename"] for job in payload["jobs"]} == {
+        "Loose Book.EPUB",
+        "Auteurs divers/Anthologie bizarre.epub",
+        "Serie X/Sous-cycle/vol_003-final.epub",
+    }
+
+    books = client.get("/api/v1/books")
+    assert books.status_code == 200
+    assert books.json()["total"] == 3
+    assert {book["title"] for book in books.json()["items"]} == {
+        "Loose Book",
+        "Anthologie bizarre",
+        "Volume Final",
+    }
+
+
+def make_test_epub(title: str = "Aurelia Phase Two", isbn: str = "9780000000002") -> bytes:
     cover_buffer = BytesIO()
     Image.new("RGB", (2, 2), (245, 197, 66)).save(cover_buffer, "PNG")
     png_cover = cover_buffer.getvalue()
@@ -142,11 +184,11 @@ def make_test_epub() -> bytes:
         )
         archive.writestr(
             "OEBPS/content.opf",
-            """<?xml version="1.0" encoding="UTF-8"?>
+            f"""<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="book-id" version="3.0">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <dc:identifier id="book-id">9780000000002</dc:identifier>
-    <dc:title>Aurelia Phase Two</dc:title>
+    <dc:identifier id="book-id">{isbn}</dc:identifier>
+    <dc:title>{title}</dc:title>
     <dc:creator>Codex Tester</dc:creator>
     <dc:language>fr</dc:language>
     <dc:publisher>Aurelia Lab</dc:publisher>

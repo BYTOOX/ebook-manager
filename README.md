@@ -125,6 +125,7 @@ Implemented now:
 - Import screen wired to upload, scan, feedback states, and recent jobs.
 
 For local bulk imports with Compose, place EPUB files under `library-import/`.
+The scan imports every `.epub`/`.EPUB` file recursively, regardless of folder or file naming.
 Nested folders are supported, for example:
 
 ```txt
