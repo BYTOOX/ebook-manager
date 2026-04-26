@@ -42,7 +42,7 @@ export function ImportPage() {
     onSuccess: async (result) => {
       setError(null);
       setMessage(
-        `${result.scanned} fichier(s) scannes, ${result.imported} importe(s), ${result.warnings} warning(s), ${result.failed} echec(s).`
+        `${result.scanned} fichier(s) scannes, ${result.imported} nouveau(x), ${result.warnings} deja present(s), ${result.failed} echec(s).`
       );
       await queryClient.invalidateQueries({ queryKey: ["import-jobs"] });
       await queryClient.invalidateQueries({ queryKey: ["books"] });

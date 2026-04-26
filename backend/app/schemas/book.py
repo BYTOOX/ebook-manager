@@ -25,6 +25,12 @@ class BookListResponse(BaseModel):
     total: int
 
 
+class BookSeriesInfo(BaseModel):
+    name: str
+    index: float | None = None
+    source: str
+
+
 class BookDetail(BookListItem):
     subtitle: str | None = None
     description: str | None = None
@@ -35,5 +41,10 @@ class BookDetail(BookListItem):
     original_filename: str | None = None
     file_size: int | None = None
     metadata_source: str | None = None
+    series: BookSeriesInfo | None = None
+    related_books: list[BookListItem] = []
+    subjects: list[str] = []
+    contributors: list[str] = []
+    characters: list[str] = []
 
     model_config = ConfigDict(from_attributes=True)

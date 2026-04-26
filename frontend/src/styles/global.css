@@ -209,6 +209,22 @@ button:disabled {
   background: transparent;
 }
 
+.library-search {
+  margin-bottom: 14px;
+}
+
+.result-summary {
+  margin: 14px 0;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.empty-results {
+  margin: 18px 0 0;
+  color: var(--color-text-muted);
+}
+
 .form-error {
   color: var(--color-error);
 }
@@ -732,6 +748,89 @@ button:disabled {
 .description {
   color: var(--color-text-muted);
   line-height: 1.7;
+}
+
+.metadata-band {
+  display: grid;
+  gap: 14px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(245, 197, 66, 0.16);
+}
+
+.metadata-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--color-accent);
+}
+
+.metadata-heading h2,
+.metadata-band h3 {
+  margin: 0;
+}
+
+.metadata-heading h2 {
+  font-size: 18px;
+}
+
+.metadata-band h3 {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  text-transform: uppercase;
+}
+
+.metadata-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 0;
+}
+
+.metadata-grid div {
+  min-width: 0;
+}
+
+.metadata-grid dt {
+  margin-bottom: 4px;
+  color: var(--color-text-dim);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.metadata-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text);
+}
+
+.related-rail {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(118px, 142px);
+  gap: 14px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+}
+
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip-list span {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(245, 197, 66, 0.18);
+  border-radius: 999px;
+  padding: 0 11px;
+  background: rgba(245, 197, 66, 0.08);
+  color: var(--color-text-muted);
+  font-size: 13px;
 }
 
 .reader-page {

@@ -69,6 +69,8 @@ class ImportService:
                     "publisher": metadata.publisher,
                     "published_date": metadata.published_date,
                     "description": metadata.description,
+                    "subjects": metadata.subjects,
+                    "contributors": metadata.contributors,
                     "source": "epub",
                     "raw": metadata.raw,
                 },

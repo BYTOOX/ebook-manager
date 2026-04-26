@@ -1,22 +1,54 @@
-import { Grid2X2, List, SlidersHorizontal } from "lucide-react";
+import { Grid2X2, List, Search, SlidersHorizontal } from "lucide-react";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch, type BookListResponse } from "../lib/api";
 import { BookCard } from "../components/BookCard";
 import { EmptyLibrary } from "../components/EmptyLibrary";
 
-const filters = ["All", "Unread", "In Progress", "Finished", "Downloaded", "Favorites"];
+type LibraryFilter = {
+  label: string;
+  status?: string;
+  favorite?: boolean;
+};
+
+const allFilter: LibraryFilter = { label: "Tous" };
+const filters: LibraryFilter[] = [
+  allFilter,
+  { label: "Non lus", status: "unread" },
+  { label: "En cours", status: "in_progress" },
+  { label: "Termines", status: "finished" },
+  { label: "Favoris", favorite: true }
+];
 
 export function LibraryPage() {
   const [view, setView] = useState<"grid" | "list">("grid");
-  const [filter, setFilter] = useState("All");
+  const [filter, setFilter] = useState<LibraryFilter>(allFilter);
+  const [search, setSearch] = useState("");
+  const cleanSearch = search.trim();
   const { data, isLoading } = useQuery({
-    queryKey: ["books", "library"],
-    queryFn: () => apiFetch<BookListResponse>("/books?limit=48")
+    queryKey: ["books", "library", cleanSearch, filter.label],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        limit: "120",
+        sort: "added_at",
+        order: "desc"
+      });
+      if (cleanSearch) {
+        params.set("q", cleanSearch);
+      }
+      if (filter.status) {
+        params.set("status", filter.status);
+      }
+      if (filter.favorite) {
+        params.set("favorite", "true");
+      }
+      return apiFetch<BookListResponse>(`/books?${params.toString()}`);
+    }
   });
   const books = data?.items ?? [];
+  const hasActiveSearch = cleanSearch.length > 0 || filter.label !== allFilter.label;
 
-  if (!isLoading && books.length === 0) {
+  if (!isLoading && books.length === 0 && !hasActiveSearch) {
     return <EmptyLibrary />;
   }
 
@@ -40,19 +72,34 @@ export function LibraryPage() {
         </div>
       </header>
 
+      <label className="search-field library-search">
+        <Search size={20} aria-hidden="true" />
+        <input
+          value={search}
+          placeholder="Titre, auteur ou fichier"
+          onChange={(event) => setSearch(event.target.value)}
+        />
+      </label>
+
       <div className="filter-rail" aria-label="Filtres bibliotheque">
         {filters.map((item) => (
-          <button key={item} className={filter === item ? "active" : ""} onClick={() => setFilter(item)}>
-            {item}
+          <button key={item.label} className={filter.label === item.label ? "active" : ""} onClick={() => setFilter(item)}>
+            {item.label}
           </button>
         ))}
       </div>
 
-      <div className={view === "grid" ? "book-grid" : "book-list"}>
-        {books.map((book) => (
-          <BookCard key={book.id} book={book} dense={view === "list"} />
-        ))}
-      </div>
+      <p className="result-summary">{data?.total ?? 0} livre(s)</p>
+
+      {books.length > 0 ? (
+        <div className={view === "grid" ? "book-grid" : "book-list"}>
+          {books.map((book) => (
+            <BookCard key={book.id} book={book} dense={view === "list"} />
+          ))}
+        </div>
+      ) : (
+        <p className="empty-results">Aucun resultat.</p>
+      )}
     </main>
   );
 }

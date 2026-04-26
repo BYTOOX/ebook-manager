@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import zipfile
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 from pathlib import Path
 
 import ebooklib
@@ -17,6 +18,8 @@ class ExtractedEpubMetadata:
     publisher: str | None = None
     published_date: str | None = None
     description: str | None = None
+    subjects: list[str] = field(default_factory=list)
+    contributors: list[str] = field(default_factory=list)
     cover_bytes: bytes | None = None
     raw: dict[str, object] = field(default_factory=dict)
 
@@ -55,12 +58,16 @@ class EpubService:
             isbn=self._find_isbn(identifiers),
             publisher=self._first_metadata(book, "DC", "publisher"),
             published_date=self._first_metadata(book, "DC", "date"),
-            description=self._first_metadata(book, "DC", "description"),
+            description=clean_metadata_text(self._first_metadata(book, "DC", "description")),
+            subjects=self._clean_list(self._all_metadata(book, "DC", "subject")),
+            contributors=self._clean_list(self._all_metadata(book, "DC", "contributor")),
             cover_bytes=self._extract_cover(book),
             raw={
                 "titles": self._all_metadata(book, "DC", "title"),
                 "creators": authors,
+                "contributors": self._all_metadata(book, "DC", "contributor"),
                 "identifiers": identifiers,
+                "subjects": self._all_metadata(book, "DC", "subject"),
             },
         )
         return metadata
@@ -75,6 +82,20 @@ class EpubService:
             if entry and entry[0]:
                 values.append(str(entry[0]))
         return values
+
+    def _clean_list(self, values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        cleaned: list[str] = []
+        for value in values:
+            text = clean_metadata_text(value)
+            if not text:
+                continue
+            key = text.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(text)
+        return cleaned
 
     def _find_isbn(self, identifiers: list[str]) -> str | None:
         for value in identifiers:
@@ -103,3 +124,25 @@ class EpubService:
             if "cover" in name:
                 return item.get_content()
         return None
+
+
+class _TextHTMLParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        text = data.strip()
+        if text:
+            self.parts.append(text)
+
+
+def clean_metadata_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    parser = _TextHTMLParser()
+    parser.feed(value)
+    text = " ".join(parser.parts) if parser.parts else value
+    text = " ".join(text.split())
+    return text or None

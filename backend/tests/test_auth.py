@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import zipfile
+from html import escape
 from io import BytesIO
 from pathlib import Path
 
@@ -91,6 +92,10 @@ def test_epub_upload_extracts_book_and_detects_duplicate() -> None:
     assert file_response.status_code == 200
     assert file_response.headers["content-type"].startswith("application/epub+zip")
 
+    detail = client.get(f"/api/v1/books/{payload['book_id']}")
+    assert detail.status_code == 200
+    assert detail.json()["original_filename"] == "phase-two.epub"
+
     duplicate = client.post(
         "/api/v1/books/upload",
         files={"file": ("phase-two-copy.epub", epub_bytes, "application/epub+zip")},
@@ -166,11 +171,98 @@ def test_scan_imports_every_epub_recursively_regardless_of_naming() -> None:
     }
 
 
-def make_test_epub(title: str = "Aurelia Phase Two", isbn: str = "9780000000002") -> bytes:
+def test_book_search_matches_nested_original_filename() -> None:
+    client = TestClient(app)
+    client.post(
+        "/api/v1/auth/setup",
+        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
+    )
+
+    cherub_dir = TEST_LIBRARY_PATH / "incoming" / "CHERUB"
+    cherub_dir.mkdir(parents=True)
+    (cherub_dir / "100 jours en enfer.epub").write_bytes(
+        make_test_epub("100 jours en enfer", "9780000000201")
+    )
+
+    scan = client.post("/api/v1/library/scan", json={})
+    assert scan.status_code == 200
+    assert scan.json()["imported"] == 1
+
+    search = client.get("/api/v1/books?q=cherub")
+    assert search.status_code == 200
+    payload = search.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["title"] == "100 jours en enfer"
+
+
+def test_book_detail_cleans_description_and_lists_series_books() -> None:
+    client = TestClient(app)
+    client.post(
+        "/api/v1/auth/setup",
+        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
+    )
+
+    cherub_dir = TEST_LIBRARY_PATH / "incoming" / "CHERUB"
+    cherub_dir.mkdir(parents=True)
+    (cherub_dir / "CHERUB 01.epub").write_bytes(
+        make_test_epub(
+            "100 jours en enfer",
+            "9780000000301",
+            '<h3><span class="Apple-style-span">James rejoint Cherub.</span></h3>',
+        )
+    )
+    (cherub_dir / "CHERUB 02.epub").write_bytes(
+        make_test_epub("Trafic", "9780000000302", "Deuxieme mission.")
+    )
+
+    scan = client.post("/api/v1/library/scan", json={})
+    assert scan.status_code == 200
+    first_book_id = next(
+        job["result_book_id"] for job in scan.json()["jobs"] if job["filename"] == "CHERUB/CHERUB 01.epub"
+    )
+
+    detail = client.get(f"/api/v1/books/{first_book_id}")
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["description"] == "James rejoint Cherub."
+    assert payload["series"]["name"] == "CHERUB"
+    assert payload["series"]["index"] == 1.0
+    assert [book["title"] for book in payload["related_books"]] == ["Trafic"]
+
+
+def test_series_index_does_not_treat_title_number_as_volume() -> None:
+    client = TestClient(app)
+    client.post(
+        "/api/v1/auth/setup",
+        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
+    )
+
+    cherub_dir = TEST_LIBRARY_PATH / "incoming" / "CHERUB"
+    cherub_dir.mkdir(parents=True)
+    (cherub_dir / "100 jours en enfer.epub").write_bytes(
+        make_test_epub("100 jours en enfer", "9780000000401")
+    )
+
+    scan = client.post("/api/v1/library/scan", json={})
+    assert scan.status_code == 200
+    book_id = scan.json()["jobs"][0]["result_book_id"]
+
+    detail = client.get(f"/api/v1/books/{book_id}")
+    assert detail.status_code == 200
+    assert detail.json()["series"]["name"] == "CHERUB"
+    assert detail.json()["series"]["index"] is None
+
+
+def make_test_epub(
+    title: str = "Aurelia Phase Two",
+    isbn: str = "9780000000002",
+    description: str = "EPUB synthetique pour test.",
+) -> bytes:
     cover_buffer = BytesIO()
     Image.new("RGB", (2, 2), (245, 197, 66)).save(cover_buffer, "PNG")
     png_cover = cover_buffer.getvalue()
     buffer = BytesIO()
+    escaped_description = escape(description)
     with zipfile.ZipFile(buffer, "w") as archive:
         archive.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
         archive.writestr(
@@ -193,7 +285,8 @@ def make_test_epub(title: str = "Aurelia Phase Two", isbn: str = "9780000000002"
     <dc:language>fr</dc:language>
     <dc:publisher>Aurelia Lab</dc:publisher>
     <dc:date>2026-04-26</dc:date>
-    <dc:description>EPUB synthetique pour test.</dc:description>
+    <dc:description>{escaped_description}</dc:description>
+    <dc:subject>Bibliotheque personnelle</dc:subject>
     <meta name="cover" content="cover-image"/>
   </metadata>
   <manifest>

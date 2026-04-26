@@ -87,6 +87,29 @@ export type BookListResponse = {
   total: number;
 };
 
+export type BookSeriesInfo = {
+  name: string;
+  index: number | null;
+  source: string;
+};
+
+export type BookDetail = BookListItem & {
+  subtitle: string | null;
+  description: string | null;
+  language: string | null;
+  isbn: string | null;
+  publisher: string | null;
+  published_date: string | null;
+  original_filename: string | null;
+  file_size: number | null;
+  metadata_source: string | null;
+  series: BookSeriesInfo | null;
+  related_books: BookListItem[];
+  subjects: string[];
+  contributors: string[];
+  characters: string[];
+};
+
 export type ImportJob = {
   id: string;
   source: "upload" | "scan" | string;
