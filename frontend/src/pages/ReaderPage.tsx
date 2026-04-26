@@ -693,7 +693,11 @@ export function ReaderPage() {
       }
       const pendingPosition = latestPositionRef.current;
       if (pendingPosition && pendingPosition.cfi !== lastSavedCfiRef.current) {
-        void persistReaderPosition(currentBookId, pendingPosition);
+        void persistReaderPosition(currentBookId, pendingPosition).then(() => {
+          if (navigator.onLine) {
+            void flushRef.current();
+          }
+        });
       }
       if (renditionRef.current === activeRendition) {
         renditionRef.current = null;
