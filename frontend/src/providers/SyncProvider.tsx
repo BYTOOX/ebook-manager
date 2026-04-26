@@ -1,4 +1,12 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode
+} from "react";
 import { flushSyncQueue } from "../lib/sync";
 import { useOffline } from "./OfflineProvider";
 
@@ -15,7 +23,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   const { online } = useOffline();
   const [state, setState] = useState<SyncState>(online ? "synced" : "offline");
 
-  async function flush() {
+  const flush = useCallback(async () => {
     if (!online) {
       setState("offline");
       return;
@@ -27,7 +35,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     } catch {
       setState("error");
     }
-  }
+  }, [online]);
 
   useEffect(() => {
     if (!online) {
@@ -37,9 +45,9 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     void flush();
     const interval = window.setInterval(() => void flush(), 60_000);
     return () => window.clearInterval(interval);
-  }, [online]);
+  }, [online, flush]);
 
-  const value = useMemo(() => ({ state, flush }), [state]);
+  const value = useMemo(() => ({ state, flush }), [state, flush]);
   return <SyncContext.Provider value={value}>{children}</SyncContext.Provider>;
 }
 

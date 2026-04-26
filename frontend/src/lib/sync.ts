@@ -10,11 +10,10 @@ type ServerSyncResponse = {
 export async function enqueueSyncEvent(event: SyncEvent) {
   if (event.type === "progress.updated" && typeof event.payload.book_id === "string") {
     const existing = await db.sync_queue
-      .where("status")
-      .equals("pending")
       .filter(
         (queued) =>
           queued.type === "progress.updated" &&
+          (queued.status === "pending" || queued.status === "failed") &&
           queued.payload.book_id === event.payload.book_id
       )
       .first();
@@ -37,7 +36,10 @@ export async function flushSyncQueue(deviceId = "android-pwa") {
     return { synced: 0 };
   }
 
-  const events = await db.sync_queue.where("status").equals("pending").limit(25).toArray();
+  const events = await db.sync_queue
+    .filter((event) => event.status === "pending" || event.status === "failed")
+    .limit(25)
+    .toArray();
   if (events.length === 0) {
     return { synced: 0 };
   }
@@ -60,9 +62,25 @@ export async function flushSyncQueue(deviceId = "android-pwa") {
     });
 
     if (response.ok) {
+      await Promise.all(
+        events
+          .filter(
+            (event) =>
+              event.type === "progress.updated" &&
+              typeof event.payload.book_id === "string" &&
+              typeof event.payload.client_updated_at === "string"
+          )
+          .map(async (event) => {
+            const local = await db.reading_progress.get(event.payload.book_id as string);
+            if (local?.updated_at === event.payload.client_updated_at) {
+              await db.reading_progress.update(event.payload.book_id as string, { dirty: false });
+            }
+          })
+      );
       await db.sync_queue.bulkDelete(ids);
       return { synced: response.accepted };
     }
+    throw new Error("Sync rejected");
   } catch {
     await db.sync_queue.bulkUpdate(
       events.map((event) => ({

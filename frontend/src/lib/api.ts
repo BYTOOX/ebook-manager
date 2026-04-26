@@ -62,6 +62,26 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   return (await response.json()) as T;
 }
 
+export async function apiBlob(path: string, init: RequestInit = {}): Promise<Blob> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    credentials: "include"
+  });
+
+  if (!response.ok) {
+    let message = response.statusText;
+    try {
+      const error = (await response.json()) as ApiError;
+      message = formatApiError(error, message);
+    } catch {
+      // Keep the HTTP status text when the API returns no JSON body.
+    }
+    throw new Error(message);
+  }
+
+  return response.blob();
+}
+
 export type User = {
   id: string;
   username: string;
@@ -110,6 +130,32 @@ export type BookDetail = BookListItem & {
   characters: string[];
 };
 
+export type BookUpdate = {
+  title?: string;
+  authors?: string[];
+  series_name?: string | null;
+  series_index?: number | null;
+  status?: string;
+  rating?: number | null;
+  favorite?: boolean;
+};
+
+export type ReadingProgress = {
+  cfi: string | null;
+  progress_percent: number | null;
+  chapter_label: string | null;
+  chapter_href: string | null;
+  location_json: Record<string, unknown> | null;
+  device_id: string | null;
+  updated_at: string | null;
+};
+
+export type ReadingProgressResponse = {
+  ok: boolean;
+  resolved: "client_won" | "server_won" | string;
+  progress: ReadingProgress;
+};
+
 export type ImportJob = {
   id: string;
   source: "upload" | "scan" | string;
@@ -156,5 +202,12 @@ export async function scanIncoming() {
   return apiFetch<ScanResponse>("/library/scan", {
     method: "POST",
     body: JSON.stringify({})
+  });
+}
+
+export async function updateBook(bookId: string, payload: BookUpdate) {
+  return apiFetch<BookDetail>(`/books/${bookId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
   });
 }
