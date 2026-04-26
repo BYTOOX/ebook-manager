@@ -4,6 +4,7 @@ import os
 import shutil
 import uuid
 import zipfile
+from decimal import Decimal
 from html import escape
 from io import BytesIO
 from pathlib import Path
@@ -20,6 +21,7 @@ from PIL import Image  # noqa: E402
 from app.core.database import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app import models  # noqa: F401, E402
+from app.models.metadata import MetadataProviderResult  # noqa: E402
 from app.models.reading import Bookmark  # noqa: E402
 
 
@@ -528,6 +530,74 @@ def test_book_list_rating_sort_keeps_unrated_books_last() -> None:
     asc = client.get("/api/v1/books?sort=rating&order=asc")
     assert asc.status_code == 200
     assert [book["title"] for book in asc.json()["items"]] == ["Rated Low", "Rated High", "Unrated"]
+
+
+def test_metadata_apply_updates_selected_fields_from_provider_result() -> None:
+    client = TestClient(app)
+    client.post(
+        "/api/v1/auth/setup",
+        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
+    )
+
+    upload = client.post(
+        "/api/v1/books/upload",
+        files={"file": ("metadata-provider.epub", make_test_epub(), "application/epub+zip")},
+    )
+    assert upload.status_code == 201
+    book_id = upload.json()["book_id"]
+
+    with SessionLocal() as db:
+        result = MetadataProviderResult(
+            book_id=uuid.UUID(book_id),
+            provider="googlebooks",
+            provider_item_id="gb-test",
+            query="Aurelia provider",
+            raw_json={},
+            normalized_json={
+                "provider": "googlebooks",
+                "provider_item_id": "gb-test",
+                "title": "Aurelia Provider Edition",
+                "subtitle": "The curated one",
+                "authors": ["Elian Vale"],
+                "description": "<p>Clean provider description.</p>",
+                "language": "fr",
+                "isbn": "9780000000801",
+                "publisher": "Aurelia Press",
+                "published_date": "2026-04-26",
+            },
+            score=Decimal("0.920"),
+        )
+        db.add(result)
+        db.commit()
+        result_id = str(result.id)
+
+    apply = client.post(
+        f"/api/v1/books/{book_id}/metadata/apply",
+        json={
+            "result_id": result_id,
+            "fields": [
+                "title",
+                "subtitle",
+                "authors",
+                "description",
+                "language",
+                "isbn",
+                "publisher",
+                "published_date",
+            ],
+        },
+    )
+    assert apply.status_code == 200
+    payload = apply.json()
+    assert payload["title"] == "Aurelia Provider Edition"
+    assert payload["subtitle"] == "The curated one"
+    assert payload["authors"] == ["Elian Vale"]
+    assert payload["description"] == "Clean provider description."
+    assert payload["language"] == "fr"
+    assert payload["isbn"] == "9780000000801"
+    assert payload["publisher"] == "Aurelia Press"
+    assert payload["published_date"] == "2026-04-26"
+    assert payload["metadata_source"] == "googlebooks"
 
 
 def test_organization_collections_series_and_tags() -> None:

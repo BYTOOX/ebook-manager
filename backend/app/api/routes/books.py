@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.api.deps import CurrentUser, DbSession
 from app.core.config import get_settings
 from app.models.book import Author, Book, BookAuthor, BookSeries, BookTag, Series, Tag
+from app.models.metadata import MetadataProviderResult
 from app.models.reading import ReadingProgress
 from app.schemas.book import (
     BookDetail,
@@ -26,9 +27,12 @@ from app.schemas.book import (
     ReadingProgressResponse,
 )
 from app.schemas.imports import UploadBookResponse
+from app.schemas.metadata import MetadataApplyPayload, MetadataSearchPayload, MetadataSearchResponse
 from app.services.epub_service import EpubService, clean_metadata_text
 from app.services.import_service import ImportService
+from app.services.metadata_service import MetadataService
 from app.services.progress_service import apply_reading_progress, serialize_progress
+from app.services.storage_service import StorageService
 
 router = APIRouter()
 
@@ -83,6 +87,12 @@ def _list_from_metadata(value: object) -> list[str]:
         seen.add(key)
         cleaned.append(text)
     return cleaned
+
+
+def _clean_candidate_text(value: object) -> str | None:
+    if value is None:
+        return None
+    return clean_metadata_text(str(value))
 
 
 def _epub_metadata_lists(book: Book) -> tuple[list[str], list[str]]:
@@ -438,6 +448,72 @@ async def upload_book(
         status=job.status,
         warning=job.error_message if job.status == "warning" else None,
     )
+
+
+@router.post("/{book_id}/metadata/search", response_model=MetadataSearchResponse)
+def search_book_metadata(
+    book_id: UUID,
+    payload: MetadataSearchPayload,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> MetadataSearchResponse:
+    del current_user
+    book = _get_book_or_404(db, book_id)
+    service = MetadataService(get_settings())
+    candidates = service.search_candidates(db, book, payload)
+    db.commit()
+    return MetadataSearchResponse(items=candidates, total=len(candidates))
+
+
+@router.post("/{book_id}/metadata/apply", response_model=BookDetail)
+def apply_book_metadata(
+    book_id: UUID,
+    payload: MetadataApplyPayload,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> BookDetail:
+    book = _get_book_or_404(db, book_id)
+    fields = set(payload.fields)
+    if not fields:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No metadata fields selected")
+
+    result = db.get(MetadataProviderResult, payload.result_id)
+    if result is None or result.book_id != book.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Metadata result not found")
+    candidate = result.normalized_json if isinstance(result.normalized_json, dict) else {}
+
+    if "title" in fields:
+        title = _clean_candidate_text(candidate.get("title"))
+        if title:
+            book.title = title
+    if "subtitle" in fields:
+        book.subtitle = _clean_candidate_text(candidate.get("subtitle"))
+    if "authors" in fields:
+        authors = candidate.get("authors") if isinstance(candidate.get("authors"), list) else []
+        _set_book_authors(db, book, [str(author) for author in authors])
+    if "description" in fields:
+        book.description = clean_metadata_text(_clean_candidate_text(candidate.get("description")))
+    if "language" in fields:
+        book.language = _clean_candidate_text(candidate.get("language"))
+    if "isbn" in fields:
+        book.isbn = _clean_candidate_text(candidate.get("isbn"))
+    if "publisher" in fields:
+        book.publisher = _clean_candidate_text(candidate.get("publisher"))
+    if "published_date" in fields:
+        book.published_date = _clean_candidate_text(candidate.get("published_date"))
+    if "cover" in fields:
+        cover_bytes = MetadataService(get_settings()).download_cover(
+            _clean_candidate_text(candidate.get("cover_url"))
+        )
+        cover_path = StorageService(get_settings()).save_cover_jpeg(cover_bytes, book.id)
+        if cover_path:
+            book.cover_path = str(cover_path)
+
+    book.metadata_source = result.provider
+    book.metadata_provider_id = result.provider_item_id
+    db.commit()
+    db.refresh(book)
+    return get_book(book_id, current_user, db)
 
 
 @router.get("/{book_id}", response_model=BookDetail)
