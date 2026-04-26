@@ -32,6 +32,7 @@ import {
   getOfflineBookDetail,
   getOfflineCoverObjectUrl,
   isBookOffline,
+  refreshOfflineBookMetadata,
   removeOfflineBook
 } from "../lib/offline";
 
@@ -105,6 +106,7 @@ export function BookDetailPage() {
   const [offlineBusy, setOfflineBusy] = useState(false);
   const [offlineError, setOfflineError] = useState<string | null>(null);
   const [coverObjectUrl, setCoverObjectUrl] = useState<string | null>(null);
+  const [coverRevision, setCoverRevision] = useState(0);
   const [editing, setEditing] = useState(false);
   const [metadataBusy, setMetadataBusy] = useState(false);
   const [metadataError, setMetadataError] = useState<string | null>(null);
@@ -181,7 +183,7 @@ export function BookDetailPage() {
         URL.revokeObjectURL(objectUrl);
       }
     };
-  }, [bookId, offlineReady]);
+  }, [bookId, offlineReady, coverRevision]);
 
   useEffect(() => {
     if (!data) {
@@ -257,6 +259,9 @@ export function BookDetailPage() {
         favorite: metadataForm.favorite
       });
       queryClient.setQueryData(["book", bookId], updated);
+      if (await refreshOfflineBookMetadata(updated)) {
+        setCoverRevision((current) => current + 1);
+      }
       await queryClient.invalidateQueries({ queryKey: ["books"] });
       setEditing(false);
     } catch (caught) {
@@ -302,23 +307,34 @@ export function BookDetailPage() {
     );
   }
 
-  async function handleProviderApply() {
-    if (!data || !selectedCandidateId || selectedFields.length === 0 || providerBusy) {
+  async function applyProviderFields(fields: MetadataApplyField[]) {
+    if (!data || !selectedCandidateId || fields.length === 0 || providerBusy) {
       return;
     }
     setProviderBusy(true);
     setProviderError(null);
     setProviderMessage(null);
     try {
-      const updated = await applyBookMetadata(data.id, selectedCandidateId, selectedFields);
+      const updated = await applyBookMetadata(data.id, selectedCandidateId, fields);
       queryClient.setQueryData(["book", bookId], updated);
+      if (await refreshOfflineBookMetadata(updated)) {
+        setCoverRevision((current) => current + 1);
+      }
       await queryClient.invalidateQueries({ queryKey: ["books"] });
-      setProviderMessage("Metadonnees appliquees");
+      setProviderMessage(fields.length === 1 && fields[0] === "cover" ? "Couverture remplacee" : "Metadonnees appliquees");
     } catch (caught) {
       setProviderError(caught instanceof Error ? caught.message : "Application metadata impossible");
     } finally {
       setProviderBusy(false);
     }
+  }
+
+  async function handleProviderApply() {
+    await applyProviderFields(selectedFields);
+  }
+
+  async function handleProviderCoverApply() {
+    await applyProviderFields(["cover"]);
   }
 
   if (!data) {
@@ -503,6 +519,30 @@ export function BookDetailPage() {
                   <Check size={18} aria-hidden="true" />
                   <h2>Appliquer</h2>
                 </div>
+                {selectedCandidate.cover_url && (
+                  <div className="cover-compare">
+                    <div>
+                      <span>Actuelle</span>
+                      <div className="cover-preview">
+                        {coverUrl ? <img src={coverUrl} alt="" /> : <strong>{data.title[0]}</strong>}
+                      </div>
+                    </div>
+                    <div>
+                      <span>Provider</span>
+                      <div className="cover-preview">
+                        <img src={selectedCandidate.cover_url} alt="" loading="lazy" />
+                      </div>
+                    </div>
+                    <button
+                      className="secondary-action wide"
+                      onClick={() => void handleProviderCoverApply()}
+                      disabled={providerBusy}
+                    >
+                      {providerBusy ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Download size={18} aria-hidden="true" />}
+                      Prendre cette couverture
+                    </button>
+                  </div>
+                )}
                 <div className="metadata-field-list">
                   {metadataApplyFields.map((field) => {
                     const next = candidateValue(selectedCandidate, field.key);

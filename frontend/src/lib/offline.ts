@@ -75,6 +75,21 @@ export async function downloadBookForOffline(book: BookDetail) {
   });
 }
 
+export async function refreshOfflineBookMetadata(book: BookDetail) {
+  const offlineBook = await db.offline_books.get(book.id);
+  if (!offlineBook) {
+    return false;
+  }
+  const coverBlob = await fetchOptionalBlob(book.cover_url);
+  await db.offline_books.update(book.id, {
+    title: book.title,
+    authors: book.authors,
+    cover_blob: coverBlob,
+    metadata_snapshot: { ...book, is_offline_available: true }
+  });
+  return true;
+}
+
 export async function removeOfflineBook(bookId: string) {
   await db.offline_books.delete(bookId);
 }

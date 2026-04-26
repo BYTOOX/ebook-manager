@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import CurrentUser, DbSession
-from app.api.routes.books import _series_from_filename, serialize_book
+from app.api.routes.books import _series_from_filename, book_cover_url, serialize_book
 from app.models.book import Book, BookAuthor, BookSeries, BookTag, Collection, CollectionBook, Series, Tag
 from app.schemas.organization import (
     CollectionBooksPayload,
@@ -77,9 +77,7 @@ def _series_books(db: DbSession, series: Series) -> list[Book]:
 
 
 def _cover_url(book: Book | None) -> str | None:
-    if book is None or not book.cover_path:
-        return None
-    return f"/api/v1/books/{book.id}/cover"
+    return book_cover_url(book) if book else None
 
 
 def _collection_summary(db: DbSession, collection: Collection) -> CollectionSummary:

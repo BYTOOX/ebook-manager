@@ -37,13 +37,21 @@ from app.services.storage_service import StorageService
 router = APIRouter()
 
 
+def book_cover_url(book: Book) -> str | None:
+    if not book.cover_path:
+        return None
+    version_source = book.updated_at or book.added_at
+    version = int(version_source.timestamp()) if version_source else 0
+    return f"/api/v1/books/{book.id}/cover?v={version}"
+
+
 def serialize_book(book: Book, progress_percent: float | None = None) -> BookListItem:
     authors = [link.author.name for link in book.book_authors]
     return BookListItem(
         id=book.id,
         title=book.title,
         authors=authors,
-        cover_url=f"/api/v1/books/{book.id}/cover" if book.cover_path else None,
+        cover_url=book_cover_url(book),
         status=book.status,
         rating=book.rating,
         favorite=book.favorite,
