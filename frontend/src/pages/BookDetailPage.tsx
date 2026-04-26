@@ -1,8 +1,10 @@
-import { BookOpen, Download, FileText, Play, Star, Users } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { BookOpen, Check, Download, FileText, Loader2, Pencil, Play, Save, Star, Users, X } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { apiFetch, type BookDetail } from "../lib/api";
+import { apiFetch, updateBook, type BookDetail } from "../lib/api";
 import { BookCard } from "../components/BookCard";
+import { downloadBookForOffline, isBookOffline } from "../lib/offline";
 
 function formatBytes(size: number | null) {
   if (!size) {
@@ -21,11 +23,102 @@ function formatBytes(size: number | null) {
 
 export function BookDetailPage() {
   const { bookId } = useParams();
+  const queryClient = useQueryClient();
+  const [offlineReady, setOfflineReady] = useState(false);
+  const [offlineBusy, setOfflineBusy] = useState(false);
+  const [offlineError, setOfflineError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [metadataBusy, setMetadataBusy] = useState(false);
+  const [metadataError, setMetadataError] = useState<string | null>(null);
+  const [metadataForm, setMetadataForm] = useState({
+    title: "",
+    authors: "",
+    seriesName: "",
+    seriesIndex: "",
+    status: "unread",
+    rating: "",
+    favorite: false
+  });
   const { data } = useQuery({
     queryKey: ["book", bookId],
     queryFn: () => apiFetch<BookDetail>(`/books/${bookId}`),
     enabled: Boolean(bookId)
   });
+
+  useEffect(() => {
+    let alive = true;
+    if (!bookId) {
+      return;
+    }
+    isBookOffline(bookId).then((available) => {
+      if (alive) {
+        setOfflineReady(available);
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, [bookId]);
+
+  useEffect(() => {
+    if (!data) {
+      return;
+    }
+    setMetadataForm({
+      title: data.title,
+      authors: data.authors.join(", "),
+      seriesName: data.series?.name ?? "",
+      seriesIndex: data.series?.index?.toString() ?? "",
+      status: data.status,
+      rating: data.rating?.toString() ?? "",
+      favorite: data.favorite
+    });
+  }, [data]);
+
+  async function handleOfflineDownload() {
+    if (!data || offlineBusy || offlineReady) {
+      return;
+    }
+    setOfflineBusy(true);
+    setOfflineError(null);
+    try {
+      await downloadBookForOffline(data);
+      setOfflineReady(true);
+    } catch (caught) {
+      setOfflineError(caught instanceof Error ? caught.message : "Telechargement offline impossible");
+    } finally {
+      setOfflineBusy(false);
+    }
+  }
+
+  async function handleMetadataSave() {
+    if (!data || metadataBusy) {
+      return;
+    }
+    setMetadataBusy(true);
+    setMetadataError(null);
+    try {
+      const updated = await updateBook(data.id, {
+        title: metadataForm.title.trim(),
+        authors: metadataForm.authors
+          .split(",")
+          .map((author) => author.trim())
+          .filter(Boolean),
+        series_name: metadataForm.seriesName.trim() || null,
+        series_index: metadataForm.seriesIndex.trim() ? Number(metadataForm.seriesIndex) : null,
+        status: metadataForm.status,
+        rating: metadataForm.rating.trim() ? Number(metadataForm.rating) : null,
+        favorite: metadataForm.favorite
+      });
+      queryClient.setQueryData(["book", bookId], updated);
+      await queryClient.invalidateQueries({ queryKey: ["books"] });
+      setEditing(false);
+    } catch (caught) {
+      setMetadataError(caught instanceof Error ? caught.message : "Edition impossible");
+    } finally {
+      setMetadataBusy(false);
+    }
+  }
 
   if (!data) {
     return <main className="page"><div className="skeleton tall" /></main>;
@@ -52,11 +145,92 @@ export function BookDetailPage() {
             <Play size={18} aria-hidden="true" />
             Lire
           </Link>
-          <button className="secondary-action">
-            <Download size={18} aria-hidden="true" />
-            Offline
+          <button className="secondary-action" onClick={() => void handleOfflineDownload()} disabled={offlineBusy || offlineReady}>
+            {offlineBusy ? (
+              <Loader2 className="spin" size={18} aria-hidden="true" />
+            ) : offlineReady ? (
+              <Check size={18} aria-hidden="true" />
+            ) : (
+              <Download size={18} aria-hidden="true" />
+            )}
+            {offlineReady ? "Disponible offline" : offlineBusy ? "Telechargement" : "Offline"}
+          </button>
+          <button className="secondary-action" onClick={() => setEditing((value) => !value)}>
+            {editing ? <X size={18} aria-hidden="true" /> : <Pencil size={18} aria-hidden="true" />}
+            {editing ? "Annuler" : "Modifier"}
           </button>
         </div>
+        {offlineError && <p className="form-error">{offlineError}</p>}
+        {editing && (
+          <section className="metadata-edit-panel" aria-label="Edition metadonnees">
+            <label>
+              <span>Titre</span>
+              <input
+                value={metadataForm.title}
+                onChange={(event) => setMetadataForm((current) => ({ ...current, title: event.target.value }))}
+              />
+            </label>
+            <label>
+              <span>Auteurs</span>
+              <input
+                value={metadataForm.authors}
+                onChange={(event) => setMetadataForm((current) => ({ ...current, authors: event.target.value }))}
+              />
+            </label>
+            <div className="metadata-edit-grid">
+              <label>
+                <span>Serie</span>
+                <input
+                  value={metadataForm.seriesName}
+                  onChange={(event) => setMetadataForm((current) => ({ ...current, seriesName: event.target.value }))}
+                />
+              </label>
+              <label>
+                <span>Tome</span>
+                <input
+                  inputMode="decimal"
+                  value={metadataForm.seriesIndex}
+                  onChange={(event) => setMetadataForm((current) => ({ ...current, seriesIndex: event.target.value }))}
+                />
+              </label>
+            </div>
+            <div className="metadata-edit-grid">
+              <label>
+                <span>Statut</span>
+                <select
+                  value={metadataForm.status}
+                  onChange={(event) => setMetadataForm((current) => ({ ...current, status: event.target.value }))}
+                >
+                  <option value="unread">Non lu</option>
+                  <option value="in_progress">En cours</option>
+                  <option value="finished">Termine</option>
+                  <option value="abandoned">Abandonne</option>
+                </select>
+              </label>
+              <label>
+                <span>Note</span>
+                <input
+                  inputMode="numeric"
+                  value={metadataForm.rating}
+                  onChange={(event) => setMetadataForm((current) => ({ ...current, rating: event.target.value }))}
+                />
+              </label>
+            </div>
+            <label className="checkbox-line">
+              <input
+                type="checkbox"
+                checked={metadataForm.favorite}
+                onChange={(event) => setMetadataForm((current) => ({ ...current, favorite: event.target.checked }))}
+              />
+              <span>Favori</span>
+            </label>
+            {metadataError && <p className="form-error">{metadataError}</p>}
+            <button className="primary-action wide" onClick={() => void handleMetadataSave()} disabled={metadataBusy}>
+              {metadataBusy ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Save size={18} aria-hidden="true" />}
+              Enregistrer
+            </button>
+          </section>
+        )}
         {data.description && <p className="description">{data.description}</p>}
         <section className="metadata-band" aria-label="Metadonnees du livre">
           <div className="metadata-heading">

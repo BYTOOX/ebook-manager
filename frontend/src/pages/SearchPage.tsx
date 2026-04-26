@@ -1,11 +1,13 @@
 import { Search } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BookCard } from "../components/BookCard";
 import { apiFetch, type BookListResponse } from "../lib/api";
+import { applyLocalOfflineAvailability, listOfflineBookIds } from "../lib/offline";
 
 export function SearchPage() {
   const [query, setQuery] = useState("");
+  const [offlineBookIds, setOfflineBookIds] = useState<Set<string>>(new Set());
   const cleanQuery = query.trim();
   const { data, isLoading } = useQuery({
     queryKey: ["books", "search", cleanQuery],
@@ -21,6 +23,29 @@ export function SearchPage() {
     enabled: cleanQuery.length > 0
   });
   const books = data?.items ?? [];
+  const booksWithOffline = useMemo(
+    () => applyLocalOfflineAvailability(books, offlineBookIds),
+    [books, offlineBookIds]
+  );
+
+  useEffect(() => {
+    let mounted = true;
+    listOfflineBookIds()
+      .then((ids) => {
+        if (mounted) {
+          setOfflineBookIds(new Set(ids));
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setOfflineBookIds(new Set());
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   return (
     <main className="page">
@@ -40,14 +65,14 @@ export function SearchPage() {
       </label>
       {cleanQuery && <p className="result-summary">{data?.total ?? 0} resultat(s)</p>}
       {isLoading && <div className="skeleton tall" />}
-      {!isLoading && books.length > 0 && (
+      {!isLoading && booksWithOffline.length > 0 && (
         <div className="book-grid search-results">
-          {books.map((book) => (
+          {booksWithOffline.map((book) => (
             <BookCard key={book.id} book={book} />
           ))}
         </div>
       )}
-      {!isLoading && cleanQuery && books.length === 0 && (
+      {!isLoading && cleanQuery && booksWithOffline.length === 0 && (
         <p className="empty-results">Aucun resultat.</p>
       )}
     </main>

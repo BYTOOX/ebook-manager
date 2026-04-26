@@ -1,9 +1,10 @@
 import { Grid2X2, List, Search, SlidersHorizontal } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch, type BookListResponse } from "../lib/api";
 import { BookCard } from "../components/BookCard";
 import { EmptyLibrary } from "../components/EmptyLibrary";
+import { applyLocalOfflineAvailability, listOfflineBookIds } from "../lib/offline";
 
 type LibraryFilter = {
   label: string;
@@ -24,6 +25,7 @@ export function LibraryPage() {
   const [view, setView] = useState<"grid" | "list">("grid");
   const [filter, setFilter] = useState<LibraryFilter>(allFilter);
   const [search, setSearch] = useState("");
+  const [offlineBookIds, setOfflineBookIds] = useState<Set<string>>(new Set());
   const cleanSearch = search.trim();
   const { data, isLoading } = useQuery({
     queryKey: ["books", "library", cleanSearch, filter.label],
@@ -46,9 +48,32 @@ export function LibraryPage() {
     }
   });
   const books = data?.items ?? [];
+  const booksWithOffline = useMemo(
+    () => applyLocalOfflineAvailability(books, offlineBookIds),
+    [books, offlineBookIds]
+  );
   const hasActiveSearch = cleanSearch.length > 0 || filter.label !== allFilter.label;
 
-  if (!isLoading && books.length === 0 && !hasActiveSearch) {
+  useEffect(() => {
+    let mounted = true;
+    listOfflineBookIds()
+      .then((ids) => {
+        if (mounted) {
+          setOfflineBookIds(new Set(ids));
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setOfflineBookIds(new Set());
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  if (!isLoading && booksWithOffline.length === 0 && !hasActiveSearch) {
     return <EmptyLibrary />;
   }
 
@@ -91,9 +116,9 @@ export function LibraryPage() {
 
       <p className="result-summary">{data?.total ?? 0} livre(s)</p>
 
-      {books.length > 0 ? (
+      {booksWithOffline.length > 0 ? (
         <div className={view === "grid" ? "book-grid" : "book-list"}>
-          {books.map((book) => (
+          {booksWithOffline.map((book) => (
             <BookCard key={book.id} book={book} dense={view === "list"} />
           ))}
         </div>

@@ -1,20 +1,47 @@
 import { ArrowRight, Download, Play } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
 import { apiFetch, type BookListResponse } from "../lib/api";
 import { BookCard } from "../components/BookCard";
 import { EmptyLibrary } from "../components/EmptyLibrary";
+import { applyLocalOfflineAvailability, listOfflineBookIds } from "../lib/offline";
 
 export function HomePage() {
+  const [offlineBookIds, setOfflineBookIds] = useState<Set<string>>(new Set());
   const { data, isLoading } = useQuery({
     queryKey: ["books", "home"],
     queryFn: () => apiFetch<BookListResponse>("/books?limit=12")
   });
 
   const books = data?.items ?? [];
-  const continueBook = books.find((book) => book.status === "in_progress") ?? books[0];
+  const booksWithOffline = useMemo(
+    () => applyLocalOfflineAvailability(books, offlineBookIds),
+    [books, offlineBookIds]
+  );
+  const downloadedBooks = booksWithOffline.filter((book) => book.is_offline_available).slice(0, 6);
+  const continueBook = booksWithOffline.find((book) => book.status === "in_progress") ?? booksWithOffline[0];
 
-  if (!isLoading && books.length === 0) {
+  useEffect(() => {
+    let mounted = true;
+    listOfflineBookIds()
+      .then((ids) => {
+        if (mounted) {
+          setOfflineBookIds(new Set(ids));
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setOfflineBookIds(new Set());
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  if (!isLoading && booksWithOffline.length === 0) {
     return <EmptyLibrary />;
   }
 
@@ -49,13 +76,10 @@ export function HomePage() {
         <Download size={18} aria-hidden="true" />
       </section>
       <div className="horizontal-rail">
-        {books
-          .filter((book) => book.is_offline_available)
-          .slice(0, 6)
-          .map((book) => (
-            <BookCard key={book.id} book={book} />
-          ))}
-        {!books.some((book) => book.is_offline_available) && <p className="muted-line">Aucun EPUB hors ligne.</p>}
+        {downloadedBooks.map((book) => (
+          <BookCard key={book.id} book={book} />
+        ))}
+        {downloadedBooks.length === 0 && <p className="muted-line">Aucun EPUB hors ligne.</p>}
       </div>
 
       <section className="section-heading">
@@ -66,7 +90,7 @@ export function HomePage() {
         </Link>
       </section>
       <div className="book-grid">
-        {books.map((book) => (
+        {booksWithOffline.map((book) => (
           <BookCard key={book.id} book={book} />
         ))}
       </div>
