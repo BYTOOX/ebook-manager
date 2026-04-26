@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
 
@@ -12,12 +13,22 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import CurrentUser, DbSession
 from app.core.config import get_settings
-from app.models.book import Author, Book, BookAuthor
+from app.models.book import Author, Book, BookAuthor, BookSeries, Series
 from app.models.reading import ReadingProgress
-from app.schemas.book import BookDetail, BookListItem, BookListResponse, BookSeriesInfo
+from app.schemas.book import (
+    BookDetail,
+    BookListItem,
+    BookListResponse,
+    BookSeriesInfo,
+    BookUpdate,
+    ReadingProgressOut,
+    ReadingProgressPayload,
+    ReadingProgressResponse,
+)
 from app.schemas.imports import UploadBookResponse
 from app.services.epub_service import EpubService, clean_metadata_text
 from app.services.import_service import ImportService
+from app.services.progress_service import apply_reading_progress, serialize_progress
 
 router = APIRouter()
 
@@ -37,6 +48,13 @@ def serialize_book(book: Book, progress_percent: float | None = None) -> BookLis
         added_at=book.added_at,
         last_opened_at=book.last_opened_at,
     )
+
+
+def _get_book_or_404(db: Session, book_id: UUID) -> Book:
+    book = db.get(Book, book_id)
+    if book is None or book.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
+    return book
 
 
 def _metadata_snapshot(book: Book) -> dict[str, object]:
@@ -116,6 +134,90 @@ def _related_books_for_series(db: Session, book: Book, series_name: str | None) 
     return [serialize_book(related) for related in books]
 
 
+def _related_books_for_stored_series(db: Session, book: Book) -> list[BookListItem]:
+    if not book.book_series:
+        return []
+    books = db.scalars(
+        select(Book)
+        .join(BookSeries, BookSeries.book_id == Book.id)
+        .options(selectinload(Book.book_authors).selectinload(BookAuthor.author))
+        .where(
+            Book.deleted_at.is_(None),
+            Book.id != book.id,
+            BookSeries.series_id == book.book_series.series_id,
+        )
+        .order_by(BookSeries.series_index.asc().nulls_last(), func.lower(Book.title))
+        .limit(24)
+    ).unique()
+    return [serialize_book(related) for related in books]
+
+
+def _set_book_authors(db: Session, book: Book, author_names: list[str]) -> None:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for name in author_names:
+        clean_name = name.strip()
+        if not clean_name:
+            continue
+        key = clean_name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(clean_name)
+
+    book.book_authors.clear()
+    for position, name in enumerate(cleaned):
+        author = db.scalar(select(Author).where(func.lower(Author.name) == name.lower()))
+        if author is None:
+            author = Author(name=name)
+            db.add(author)
+            db.flush()
+        book.book_authors.append(BookAuthor(author=author, position=position))
+
+
+def _set_book_series(
+    db: Session,
+    book: Book,
+    series_name: str | None,
+    series_index: float | None,
+) -> None:
+    clean_name = series_name.strip() if series_name else ""
+    if not clean_name:
+        book.book_series = None
+        return
+
+    series = db.scalar(select(Series).where(func.lower(Series.name) == clean_name.lower()))
+    if series is None:
+        series = Series(name=clean_name)
+        db.add(series)
+        db.flush()
+
+    if book.book_series is None:
+        book.book_series = BookSeries(book_id=book.id)
+    book.book_series.series_id = series.id
+    book.book_series.series_index = (
+        Decimal(str(series_index)) if series_index is not None else None
+    )
+
+
+def _book_series_info(book: Book) -> BookSeriesInfo | None:
+    if book.book_series and book.book_series.series:
+        return BookSeriesInfo(
+            name=book.book_series.series.name,
+            index=float(book.book_series.series_index)
+            if book.book_series.series_index is not None
+            else None,
+            source="manual",
+        )
+
+    series_name, series_index = _series_from_filename(book.original_filename)
+    return (
+        BookSeriesInfo(name=series_name, index=series_index, source="import_path")
+        if series_name
+        else None
+    )
+
+
 @router.get("", response_model=BookListResponse)
 def list_books(
     current_user: CurrentUser,
@@ -128,7 +230,6 @@ def list_books(
     limit: int = Query(default=24, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> BookListResponse:
-    del current_user
     order = order.lower()
     if order not in {"asc", "desc"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid order")
@@ -165,15 +266,115 @@ def list_books(
 
     total = db.scalar(select(func.count()).select_from(Book).where(*conditions)) or 0
     sort_expression = sort_column.asc() if order == "asc" else sort_column.desc()
-    books = db.scalars(
-        select(Book)
-        .options(selectinload(Book.book_authors).selectinload(BookAuthor.author))
-        .where(*conditions)
-        .order_by(sort_expression, Book.added_at.desc())
-        .limit(limit)
-        .offset(offset)
-    ).unique()
-    return BookListResponse(items=[serialize_book(book) for book in books], total=total)
+    books = list(
+        db.scalars(
+            select(Book)
+            .options(selectinload(Book.book_authors).selectinload(BookAuthor.author))
+            .where(*conditions)
+            .order_by(sort_expression, Book.added_at.desc())
+            .limit(limit)
+            .offset(offset)
+        ).unique()
+    )
+    progress_by_book: dict[UUID, float] = {}
+    if books:
+        progress_rows = db.scalars(
+            select(ReadingProgress).where(
+                ReadingProgress.user_id == current_user.id,
+                ReadingProgress.book_id.in_([book.id for book in books]),
+            )
+        )
+        progress_by_book = {
+            row.book_id: float(row.progress_percent)
+            for row in progress_rows
+            if row.progress_percent is not None
+        }
+
+    return BookListResponse(
+        items=[serialize_book(book, progress_by_book.get(book.id)) for book in books],
+        total=total,
+    )
+
+
+@router.get("/{book_id}/progress", response_model=ReadingProgressOut)
+def get_book_progress(
+    book_id: UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> ReadingProgressOut:
+    _get_book_or_404(db, book_id)
+    reading_progress = db.scalar(
+        select(ReadingProgress).where(
+            ReadingProgress.user_id == current_user.id,
+            ReadingProgress.book_id == book_id,
+        )
+    )
+    return serialize_progress(reading_progress)
+
+
+@router.put("/{book_id}/progress", response_model=ReadingProgressResponse)
+def put_book_progress(
+    book_id: UUID,
+    payload: ReadingProgressPayload,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> ReadingProgressResponse:
+    book = _get_book_or_404(db, book_id)
+    resolved, progress = apply_reading_progress(
+        db,
+        user_id=current_user.id,
+        book=book,
+        payload=payload,
+    )
+    db.commit()
+    db.refresh(progress)
+    return ReadingProgressResponse(ok=True, resolved=resolved, progress=serialize_progress(progress))
+
+
+@router.patch("/{book_id}", response_model=BookDetail)
+def update_book(
+    book_id: UUID,
+    payload: BookUpdate,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> BookDetail:
+    book = _get_book_or_404(db, book_id)
+    fields = payload.model_fields_set
+
+    if "title" in fields:
+        title = (payload.title or "").strip()
+        if not title:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Title is required")
+        book.title = title
+    if "authors" in fields:
+        _set_book_authors(db, book, payload.authors or [])
+    if "series_name" in fields or "series_index" in fields:
+        current_name = book.book_series.series.name if book.book_series and book.book_series.series else None
+        current_index = (
+            float(book.book_series.series_index)
+            if book.book_series and book.book_series.series_index is not None
+            else None
+        )
+        _set_book_series(
+            db,
+            book,
+            payload.series_name if "series_name" in fields else current_name,
+            payload.series_index if "series_index" in fields else current_index,
+        )
+    if "status" in fields:
+        if payload.status not in {"unread", "in_progress", "finished", "abandoned"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid status")
+        book.status = payload.status
+    if "rating" in fields:
+        if payload.rating is not None and not 0 <= payload.rating <= 5:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid rating")
+        book.rating = payload.rating
+    if "favorite" in fields:
+        book.favorite = bool(payload.favorite)
+
+    db.commit()
+    db.refresh(book)
+    return get_book(book_id, current_user, db)
 
 
 @router.post("/upload", response_model=UploadBookResponse, status_code=status.HTTP_201_CREATED)
@@ -209,9 +410,7 @@ async def upload_book(
 
 @router.get("/{book_id}", response_model=BookDetail)
 def get_book(book_id: UUID, current_user: CurrentUser, db: DbSession) -> BookDetail:
-    book = db.get(Book, book_id)
-    if book is None or book.deleted_at is not None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
+    book = _get_book_or_404(db, book_id)
 
     progress = db.scalar(
         select(ReadingProgress).where(
@@ -229,8 +428,12 @@ def get_book(book_id: UUID, current_user: CurrentUser, db: DbSession) -> BookDet
     if not subjects and not contributors:
         subjects, contributors = _epub_metadata_lists(book)
 
-    series_name, series_index = _series_from_filename(book.original_filename)
-    related_books = _related_books_for_series(db, book, series_name)
+    series = _book_series_info(book)
+    related_books = (
+        _related_books_for_stored_series(db, book)
+        if series and series.source == "manual"
+        else _related_books_for_series(db, book, series.name if series else None)
+    )
 
     return BookDetail(
         **item.model_dump(),
@@ -243,9 +446,7 @@ def get_book(book_id: UUID, current_user: CurrentUser, db: DbSession) -> BookDet
         original_filename=book.original_filename,
         file_size=book.file_size,
         metadata_source=book.metadata_source,
-        series=BookSeriesInfo(name=series_name, index=series_index, source="import_path")
-        if series_name
-        else None,
+        series=series,
         related_books=related_books,
         subjects=subjects,
         contributors=contributors,
@@ -256,9 +457,7 @@ def get_book(book_id: UUID, current_user: CurrentUser, db: DbSession) -> BookDet
 @router.get("/{book_id}/file")
 def get_book_file(book_id: UUID, current_user: CurrentUser, db: DbSession) -> FileResponse:
     del current_user
-    book = db.get(Book, book_id)
-    if book is None or book.deleted_at is not None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
+    book = _get_book_or_404(db, book_id)
 
     path = Path(book.file_path)
     if not path.exists():
@@ -271,8 +470,8 @@ def get_book_file(book_id: UUID, current_user: CurrentUser, db: DbSession) -> Fi
 @router.get("/{book_id}/cover")
 def get_book_cover(book_id: UUID, current_user: CurrentUser, db: DbSession) -> FileResponse:
     del current_user
-    book = db.get(Book, book_id)
-    if book is None or book.deleted_at is not None or not book.cover_path:
+    book = _get_book_or_404(db, book_id)
+    if not book.cover_path:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cover not found")
 
     path = Path(book.cover_path)

@@ -31,6 +31,16 @@ class BookSeriesInfo(BaseModel):
     source: str
 
 
+class BookUpdate(BaseModel):
+    title: str | None = None
+    authors: list[str] | None = None
+    series_name: str | None = None
+    series_index: float | None = None
+    status: str | None = None
+    rating: int | None = None
+    favorite: bool | None = None
+
+
 class BookDetail(BookListItem):
     subtitle: str | None = None
     description: str | None = None
@@ -48,3 +58,29 @@ class BookDetail(BookListItem):
     characters: list[str] = []
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ReadingProgressPayload(BaseModel):
+    cfi: str | None = None
+    progress_percent: float | None = None
+    chapter_label: str | None = None
+    chapter_href: str | None = None
+    location_json: dict | None = None
+    device_id: str | None = None
+    client_updated_at: datetime | None = None
+
+
+class ReadingProgressOut(BaseModel):
+    cfi: str | None = None
+    progress_percent: float | None = None
+    chapter_label: str | None = None
+    chapter_href: str | None = None
+    location_json: dict | None = None
+    device_id: str | None = None
+    updated_at: datetime | None = None
+
+
+class ReadingProgressResponse(BaseModel):
+    ok: bool
+    resolved: str
+    progress: ReadingProgressOut

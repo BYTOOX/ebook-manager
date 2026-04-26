@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import uuid
 import zipfile
 from html import escape
 from io import BytesIO
@@ -228,6 +229,112 @@ def test_book_detail_cleans_description_and_lists_series_books() -> None:
     assert payload["series"]["name"] == "CHERUB"
     assert payload["series"]["index"] == 1.0
     assert [book["title"] for book in payload["related_books"]] == ["Trafic"]
+
+
+def test_progress_endpoint_and_sync_event_update_reading_progress() -> None:
+    client = TestClient(app)
+    client.post(
+        "/api/v1/auth/setup",
+        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
+    )
+
+    upload = client.post(
+        "/api/v1/books/upload",
+        files={"file": ("progress.epub", make_test_epub(), "application/epub+zip")},
+    )
+    assert upload.status_code == 201
+    book_id = upload.json()["book_id"]
+
+    update = client.put(
+        f"/api/v1/books/{book_id}/progress",
+        json={
+            "cfi": "epubcfi(/6/2!/4/2/1:0)",
+            "progress_percent": 12.5,
+            "chapter_label": "Start",
+            "chapter_href": "chapter.xhtml",
+            "location_json": {"location": 4},
+            "device_id": "test-device",
+            "client_updated_at": "2026-04-26T12:00:00Z",
+        },
+    )
+    assert update.status_code == 200
+    assert update.json()["resolved"] == "client_won"
+    assert update.json()["progress"]["progress_percent"] == 12.5
+
+    progress = client.get(f"/api/v1/books/{book_id}/progress")
+    assert progress.status_code == 200
+    assert progress.json()["cfi"] == "epubcfi(/6/2!/4/2/1:0)"
+
+    sync = client.post(
+        "/api/v1/sync/events",
+        json={
+            "device_id": "test-device",
+            "events": [
+                {
+                    "event_id": str(uuid.uuid4()),
+                    "type": "progress.updated",
+                    "client_created_at": "2026-04-26T12:10:00Z",
+                    "payload": {
+                        "book_id": book_id,
+                        "cfi": "epubcfi(/6/2!/4/2/3:0)",
+                        "progress_percent": 64,
+                        "chapter_label": "Middle",
+                        "chapter_href": "chapter.xhtml",
+                        "location_json": {"location": 40},
+                        "client_updated_at": "2026-04-26T12:10:00Z",
+                    },
+                }
+            ],
+        },
+    )
+    assert sync.status_code == 200
+    assert sync.json()["processed"] == 1
+
+    updated = client.get(f"/api/v1/books/{book_id}/progress")
+    assert updated.status_code == 200
+    assert updated.json()["progress_percent"] == 64
+    assert updated.json()["chapter_label"] == "Middle"
+
+    books = client.get("/api/v1/books")
+    assert books.status_code == 200
+    assert books.json()["items"][0]["status"] == "in_progress"
+    assert books.json()["items"][0]["progress_percent"] == 64
+
+
+def test_book_patch_updates_metadata_authors_and_series() -> None:
+    client = TestClient(app)
+    client.post(
+        "/api/v1/auth/setup",
+        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
+    )
+
+    upload = client.post(
+        "/api/v1/books/upload",
+        files={"file": ("metadata.epub", make_test_epub(), "application/epub+zip")},
+    )
+    assert upload.status_code == 201
+    book_id = upload.json()["book_id"]
+
+    update = client.patch(
+        f"/api/v1/books/{book_id}",
+        json={
+            "title": "Aurelia Metadata",
+            "authors": ["Elian Vale", "Codex Tester"],
+            "series_name": "Aurelia Cycle",
+            "series_index": 1.5,
+            "status": "in_progress",
+            "rating": 4,
+            "favorite": True,
+        },
+    )
+    assert update.status_code == 200
+    payload = update.json()
+    assert payload["title"] == "Aurelia Metadata"
+    assert payload["authors"] == ["Elian Vale", "Codex Tester"]
+    assert payload["series"] == {"name": "Aurelia Cycle", "index": 1.5, "source": "manual"}
+    assert payload["status"] == "in_progress"
+    assert payload["rating"] == 4
+    assert payload["favorite"] is True
 
 
 def test_series_index_does_not_treat_title_number_as_volume() -> None:
