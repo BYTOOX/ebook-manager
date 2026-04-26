@@ -1,4 +1,4 @@
-import { Grid2X2, List, Search, SlidersHorizontal } from "lucide-react";
+import { ArrowDownAZ, ArrowUpAZ, Calendar, Clock, Grid2X2, List, Search, SlidersHorizontal, Star } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch, type BookListResponse, type TagListResponse } from "../lib/api";
@@ -12,6 +12,9 @@ type LibraryFilter = {
   favorite?: boolean;
 };
 
+type LibrarySort = "added_at" | "title" | "last_opened_at" | "rating";
+type SortOrder = "asc" | "desc";
+
 const allFilter: LibraryFilter = { label: "Tous" };
 const filters: LibraryFilter[] = [
   allFilter,
@@ -21,20 +24,30 @@ const filters: LibraryFilter[] = [
   { label: "Favoris", favorite: true }
 ];
 
+const sortOptions: { key: LibrarySort; label: string }[] = [
+  { key: "added_at", label: "Ajout" },
+  { key: "title", label: "Titre" },
+  { key: "last_opened_at", label: "Lecture" },
+  { key: "rating", label: "Note" }
+];
+
 export function LibraryPage() {
   const [view, setView] = useState<"grid" | "list">("grid");
   const [filter, setFilter] = useState<LibraryFilter>(allFilter);
   const [tagFilter, setTagFilter] = useState<string>("");
+  const [sort, setSort] = useState<LibrarySort>("added_at");
+  const [order, setOrder] = useState<SortOrder>("desc");
+  const [showSort, setShowSort] = useState(false);
   const [search, setSearch] = useState("");
   const [offlineBookIds, setOfflineBookIds] = useState<Set<string>>(new Set());
   const cleanSearch = search.trim();
   const { data, isLoading } = useQuery({
-    queryKey: ["books", "library", cleanSearch, filter.label, tagFilter],
+    queryKey: ["books", "library", cleanSearch, filter.label, tagFilter, sort, order],
     queryFn: () => {
       const params = new URLSearchParams({
         limit: "120",
-        sort: "added_at",
-        order: "desc"
+        sort,
+        order
       });
       if (cleanSearch) {
         params.set("q", cleanSearch);
@@ -61,6 +74,7 @@ export function LibraryPage() {
     [books, offlineBookIds]
   );
   const hasActiveSearch = cleanSearch.length > 0 || filter.label !== allFilter.label || Boolean(tagFilter);
+  const activeSort = sortOptions.find((option) => option.key === sort) ?? { key: "added_at", label: "Ajout" };
 
   useEffect(() => {
     let mounted = true;
@@ -99,7 +113,11 @@ export function LibraryPage() {
           <button aria-label="Liste" className={view === "list" ? "icon-button active" : "icon-button"} onClick={() => setView("list")}>
             <List size={19} aria-hidden="true" />
           </button>
-          <button aria-label="Tri" className="icon-button">
+          <button
+            aria-label="Tri"
+            className={showSort ? "icon-button active" : "icon-button"}
+            onClick={() => setShowSort((current) => !current)}
+          >
             <SlidersHorizontal size={19} aria-hidden="true" />
           </button>
         </div>
@@ -113,6 +131,41 @@ export function LibraryPage() {
           onChange={(event) => setSearch(event.target.value)}
         />
       </label>
+
+      {showSort && (
+        <div className="sort-panel">
+          <div className="sort-panel-heading">
+            <SlidersHorizontal size={17} aria-hidden="true" />
+            <strong>{activeSort.label}</strong>
+            <span>{order === "asc" ? "Ascendant" : "Descendant"}</span>
+          </div>
+          <div className="filter-rail sort-rail" aria-label="Tri bibliotheque">
+            {sortOptions.map((option) => (
+              <button
+                key={option.key}
+                className={sort === option.key ? "active" : ""}
+                onClick={() => setSort(option.key)}
+              >
+                {option.key === "added_at" && <Calendar size={15} aria-hidden="true" />}
+                {option.key === "title" && <ArrowDownAZ size={15} aria-hidden="true" />}
+                {option.key === "last_opened_at" && <Clock size={15} aria-hidden="true" />}
+                {option.key === "rating" && <Star size={15} aria-hidden="true" />}
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <div className="segmented compact sort-order" aria-label="Sens du tri">
+            <button className={order === "desc" ? "active" : ""} onClick={() => setOrder("desc")}>
+              <ArrowDownAZ size={16} aria-hidden="true" />
+              Desc
+            </button>
+            <button className={order === "asc" ? "active" : ""} onClick={() => setOrder("asc")}>
+              <ArrowUpAZ size={16} aria-hidden="true" />
+              Asc
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="filter-rail" aria-label="Filtres bibliotheque">
         {filters.map((item) => (

@@ -222,6 +222,40 @@ button:disabled {
   margin-bottom: 14px;
 }
 
+.sort-panel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px 0;
+  border-block: 1px solid rgba(245, 197, 66, 0.14);
+}
+
+.sort-panel-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.sort-panel-heading strong {
+  color: var(--color-text);
+}
+
+.sort-panel-heading span {
+  color: var(--color-accent);
+  font-weight: 800;
+}
+
+.sort-rail {
+  margin-inline: 0;
+  padding: 0;
+}
+
+.sort-order {
+  width: min(100%, 320px);
+}
+
 .tag-filter-rail {
   margin-top: 10px;
 }

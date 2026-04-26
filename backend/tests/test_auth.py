@@ -495,6 +495,41 @@ def test_book_patch_updates_metadata_authors_and_series() -> None:
     assert tagged.json()["items"][0]["title"] == "Aurelia Metadata"
 
 
+def test_book_list_rating_sort_keeps_unrated_books_last() -> None:
+    client = TestClient(app)
+    client.post(
+        "/api/v1/auth/setup",
+        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
+    )
+
+    low = client.post(
+        "/api/v1/books/upload",
+        files={"file": ("rated-low.epub", make_test_epub("Rated Low", "9780000000701"), "application/epub+zip")},
+    )
+    high = client.post(
+        "/api/v1/books/upload",
+        files={"file": ("rated-high.epub", make_test_epub("Rated High", "9780000000702"), "application/epub+zip")},
+    )
+    unrated = client.post(
+        "/api/v1/books/upload",
+        files={"file": ("unrated.epub", make_test_epub("Unrated", "9780000000703"), "application/epub+zip")},
+    )
+    assert low.status_code == 201
+    assert high.status_code == 201
+    assert unrated.status_code == 201
+
+    assert client.patch(f"/api/v1/books/{low.json()['book_id']}", json={"rating": 2}).status_code == 200
+    assert client.patch(f"/api/v1/books/{high.json()['book_id']}", json={"rating": 5}).status_code == 200
+
+    desc = client.get("/api/v1/books?sort=rating&order=desc")
+    assert desc.status_code == 200
+    assert [book["title"] for book in desc.json()["items"]] == ["Rated High", "Rated Low", "Unrated"]
+
+    asc = client.get("/api/v1/books?sort=rating&order=asc")
+    assert asc.status_code == 200
+    assert [book["title"] for book in asc.json()["items"]] == ["Rated Low", "Rated High", "Unrated"]
+
+
 def test_organization_collections_series_and_tags() -> None:
     client = TestClient(app)
     client.post(

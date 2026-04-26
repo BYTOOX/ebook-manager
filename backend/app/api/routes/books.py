@@ -294,6 +294,8 @@ def list_books(
 
     total = db.scalar(select(func.count()).select_from(Book).where(*conditions)) or 0
     sort_expression = sort_column.asc() if order == "asc" else sort_column.desc()
+    if sort in {"last_opened_at", "rating"}:
+        sort_expression = sort_expression.nulls_last()
     books = list(
         db.scalars(
             select(Book)
