@@ -126,17 +126,40 @@ class ImportService:
             raise ValueError("Scan path must be a directory")
 
         jobs: list[ImportJob] = []
-        for epub_path in sorted(scan_path.glob("*.epub")):
+        for epub_path in self._iter_epub_files(scan_path):
             jobs.append(
                 self.import_epub(
                     db,
                     epub_path,
                     source="scan",
-                    original_filename=epub_path.name,
+                    original_filename=epub_path.relative_to(scan_path).as_posix(),
                     remove_source=False,
                 )
             )
         return jobs
+
+    def _iter_epub_files(self, scan_path: Path) -> list[Path]:
+        library_path = self.storage.library_path.resolve()
+        ignored_library_roots = {"books", "tmp", "exports"}
+        epub_files: list[Path] = []
+
+        for candidate in scan_path.rglob("*"):
+            if not candidate.is_file() or candidate.suffix.lower() != ".epub":
+                continue
+
+            resolved = candidate.resolve()
+            try:
+                relative_to_library = resolved.relative_to(library_path)
+            except ValueError:
+                relative_to_library = None
+
+            if relative_to_library and relative_to_library.parts:
+                if relative_to_library.parts[0] in ignored_library_roots:
+                    continue
+
+            epub_files.append(candidate)
+
+        return sorted(epub_files, key=lambda path: path.relative_to(scan_path).as_posix().casefold())
 
     def _get_or_create_author(self, db: Session, name: str) -> Author:
         clean_name = name.strip()

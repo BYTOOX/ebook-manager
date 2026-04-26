@@ -121,8 +121,20 @@ Implemented now:
 - Metadata snapshot at `/data/library/books/<book_id>/metadata.json`.
 - `GET /api/v1/books/{book_id}/file` and `/cover`.
 - Import jobs listing.
-- Scan endpoint for `/data/library/incoming`, constrained inside `LIBRARY_PATH`.
+- Recursive scan endpoint for `/data/library/incoming`, constrained inside `LIBRARY_PATH`.
 - Import screen wired to upload, scan, feedback states, and recent jobs.
+
+For local bulk imports with Compose, place EPUB files under `library-import/`.
+Nested folders are supported, for example:
+
+```txt
+library-import/
+  Series Name/
+    Tome1.epub
+    Tome2.epub
+```
+
+The backend mounts this folder read-only at `/data/library/incoming` and the scan button imports it recursively.
 
 Next phases:
 

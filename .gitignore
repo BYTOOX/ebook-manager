@@ -19,4 +19,5 @@ Thumbs.db
 
 data/
 library/
+library-import/
 *.db

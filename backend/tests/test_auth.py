@@ -100,6 +100,30 @@ def test_epub_upload_extracts_book_and_detects_duplicate() -> None:
     assert duplicate.json()["book_id"] == payload["book_id"]
 
 
+def test_scan_imports_epubs_recursively_from_series_folders() -> None:
+    client = TestClient(app)
+    client.post(
+        "/api/v1/auth/setup",
+        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
+    )
+
+    series_dir = TEST_LIBRARY_PATH / "incoming" / "Nom de la serie"
+    series_dir.mkdir(parents=True)
+    (series_dir / "Tome1-aurelia.epub").write_bytes(make_test_epub())
+
+    scan = client.post("/api/v1/library/scan", json={})
+    assert scan.status_code == 200
+    payload = scan.json()
+    assert payload["scanned"] == 1
+    assert payload["imported"] == 1
+    assert payload["jobs"][0]["filename"] == "Nom de la serie/Tome1-aurelia.epub"
+
+    books = client.get("/api/v1/books")
+    assert books.status_code == 200
+    assert books.json()["total"] == 1
+    assert books.json()["items"][0]["title"] == "Aurelia Phase Two"
+
+
 def make_test_epub() -> bytes:
     cover_buffer = BytesIO()
     Image.new("RGB", (2, 2), (245, 197, 66)).save(cover_buffer, "PNG")
