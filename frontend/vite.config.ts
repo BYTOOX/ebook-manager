@@ -54,5 +54,17 @@ export default defineConfig({
         rewrite: (path) => path
       }
     }
+  },
+  preview: {
+    port: 3000,
+    host: "0.0.0.0",
+    proxy: {
+      "/api": {
+        target: apiProxyTarget,
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path
+      }
+    }
   }
 });
