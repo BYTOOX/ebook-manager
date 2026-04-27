@@ -13,11 +13,12 @@ dist/
 .vite/
 coverage/
 *.tsbuildinfo
+.local/
 
 .DS_Store
 Thumbs.db
 
-data/
-library/
-library-import/
+/data/
+/library/
+/library-import/
 *.db
