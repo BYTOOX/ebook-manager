@@ -1,0 +1,66 @@
+name: Android Reader APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional release tag to create or update, for example android-reader-v1.0.0"
+        required: false
+        type: string
+  push:
+    tags:
+      - "android-reader-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Build Android reader APK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android-reader
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Build debug APK
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug
+
+      - name: Prepare APK asset
+        run: |
+          mkdir -p ../release
+          cp app/build/outputs/apk/debug/app-debug.apk ../release/AureliaReader-debug.apk
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AureliaReader-debug-apk
+          path: release/AureliaReader-debug.apk
+          if-no-files-found: error
+
+      - name: Publish GitHub Release asset
+        if: ${{ github.ref_type == 'tag' || inputs.release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.release_tag }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" ../release/AureliaReader-debug.apk --clobber
+          else
+            gh release create "$RELEASE_TAG" ../release/AureliaReader-debug.apk \
+              --target "$GITHUB_SHA" \
+              --title "Aurelia Reader $RELEASE_TAG" \
+              --notes "Debug APK generated from the Android reader workflow."
+          fi
