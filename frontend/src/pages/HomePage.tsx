@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch, type BookListResponse } from "../lib/api";
 import { BookCard } from "../components/BookCard";
+import { AuthenticatedImage } from "../components/AuthenticatedImage";
 import { EmptyLibrary } from "../components/EmptyLibrary";
 import { applyLocalOfflineAvailability, listOfflineBookIds } from "../lib/offline";
 
@@ -68,7 +69,7 @@ export function HomePage() {
         {continueBook ? (
           <div className="continue-content">
             <div className="hero-cover">
-              {continueBook.cover_url ? <img src={continueBook.cover_url} alt="" /> : <span>{continueBook.title[0]}</span>}
+              <AuthenticatedImage src={continueBook.cover_url} alt="" fallback={<span>{continueBook.title[0]}</span>} />
             </div>
             <div>
               <h1>{continueBook.title}</h1>

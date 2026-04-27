@@ -7,7 +7,13 @@ import {
   useState,
   type ReactNode
 } from "react";
-import { apiFetch, type User } from "../lib/api";
+import {
+  AUTH_UNAUTHORIZED_EVENT,
+  apiFetch,
+  readAccessToken,
+  writeAccessToken,
+  type User
+} from "../lib/api";
 import { db } from "../lib/db";
 
 type AuthStatus = "loading" | "authenticated" | "anonymous";
@@ -23,6 +29,9 @@ type AuthContextValue = {
 
 type LoginResponse = {
   ok: boolean;
+  access_token: string;
+  token_type: "bearer" | string;
+  expires_in: number;
   user: User;
 };
 
@@ -62,6 +71,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
 
   const refresh = useCallback(async () => {
+    if (!readAccessToken()) {
+      if (!navigator.onLine) {
+        const cachedUser = await readCachedUser();
+        if (cachedUser) {
+          setUser(cachedUser);
+          setStatus("authenticated");
+          return;
+        }
+      }
+      await cacheUser(null);
+      setUser(null);
+      setStatus("anonymous");
+      return;
+    }
+
     try {
       const nextUser = await apiFetch<User>("/auth/me");
       await cacheUser(nextUser);
@@ -86,11 +110,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    const onUnauthorized = () => {
+      void cacheUser(null);
+      setUser(null);
+      setStatus("anonymous");
+    };
+    window.addEventListener(AUTH_UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, onUnauthorized);
+  }, []);
+
   const login = useCallback(async (username: string, password: string) => {
     const response = await apiFetch<LoginResponse>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password })
     });
+    writeAccessToken(response.access_token);
     await cacheUser(response.user);
     setUser(response.user);
     setStatus("authenticated");
@@ -105,16 +140,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         display_name: displayName
       })
     });
+    writeAccessToken(response.access_token);
     await cacheUser(response.user);
     setUser(response.user);
     setStatus("authenticated");
   }, []);
 
   const logout = useCallback(async () => {
-    await apiFetch<{ ok: boolean }>("/auth/logout", { method: "POST" });
-    await cacheUser(null);
-    setUser(null);
-    setStatus("anonymous");
+    try {
+      await apiFetch<{ ok: boolean }>("/auth/logout", { method: "POST" });
+    } finally {
+      writeAccessToken(null);
+      await cacheUser(null);
+      setUser(null);
+      setStatus("anonymous");
+    }
   }, []);
 
   const value = useMemo(

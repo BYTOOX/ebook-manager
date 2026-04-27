@@ -1,4 +1,6 @@
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api/v1";
+export const ACCESS_TOKEN_STORAGE_KEY = "aurelia:access_token";
+export const AUTH_UNAUTHORIZED_EVENT = "aurelia:auth:unauthorized";
 
 export type ApiError = {
   detail?: unknown;
@@ -32,19 +34,89 @@ function formatApiError(error: ApiError, fallback: string): string {
   return fallback;
 }
 
+export function readAccessToken(): string | null {
+  try {
+    return localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function writeAccessToken(token: string | null): void {
+  try {
+    if (token) {
+      localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, token);
+    } else {
+      localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+    }
+  } catch {
+    // localStorage can be unavailable in private or constrained browser contexts.
+  }
+}
+
+function withBearerAuth(headersInit?: HeadersInit, token = readAccessToken()): Headers {
+  const headers = new Headers(headersInit);
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  return headers;
+}
+
+function isApiUrl(url: string): boolean {
+  if (url.startsWith("/api/")) {
+    return true;
+  }
+  if (API_BASE_URL.startsWith("/") && url.startsWith(API_BASE_URL)) {
+    return true;
+  }
+  if (!API_BASE_URL.startsWith("http")) {
+    return false;
+  }
+
+  try {
+    const origin = typeof window === "undefined" ? "http://localhost" : window.location.origin;
+    const target = new URL(url, origin);
+    const apiBase = new URL(API_BASE_URL);
+    return target.origin === apiBase.origin && target.pathname.startsWith(apiBase.pathname);
+  } catch {
+    return false;
+  }
+}
+
+export function authHeadersForUrl(url: string, headersInit?: HeadersInit): Headers {
+  if (!isApiUrl(url)) {
+    return new Headers(headersInit);
+  }
+  return withBearerAuth(headersInit);
+}
+
+function handleUnauthorized(response: Response, requestToken: string | null): void {
+  if (response.status !== 401) {
+    return;
+  }
+  if (!requestToken || readAccessToken() !== requestToken) {
+    return;
+  }
+  writeAccessToken(null);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(AUTH_UNAUTHORIZED_EVENT));
+  }
+}
+
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers);
+  const requestToken = readAccessToken();
+  const headers = withBearerAuth(init.headers, requestToken);
   if (!(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
-    headers,
-    credentials: "include"
+    headers
   });
 
   if (!response.ok) {
+    handleUnauthorized(response, requestToken);
     let message = response.statusText;
     try {
       const error = (await response.json()) as ApiError;
@@ -63,12 +135,15 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
 }
 
 export async function apiBlob(path: string, init: RequestInit = {}): Promise<Blob> {
+  const requestToken = readAccessToken();
+  const headers = withBearerAuth(init.headers, requestToken);
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
-    credentials: "include"
+    headers
   });
 
   if (!response.ok) {
+    handleUnauthorized(response, requestToken);
     let message = response.statusText;
     try {
       const error = (await response.json()) as ApiError;

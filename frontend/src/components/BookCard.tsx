@@ -1,6 +1,7 @@
 import { Bookmark, Star } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { BookListItem } from "../lib/api";
+import { AuthenticatedImage } from "./AuthenticatedImage";
 
 export function BookCard({ book, dense = false }: { book: BookListItem; dense?: boolean }) {
   const progress = Math.max(0, Math.min(100, book.progress_percent ?? 0));
@@ -9,7 +10,7 @@ export function BookCard({ book, dense = false }: { book: BookListItem; dense?: 
   return (
     <Link className={dense ? "book-row" : "book-card"} to={`/books/${book.id}`}>
       <div className="cover">
-        {book.cover_url ? <img src={book.cover_url} alt="" loading="lazy" /> : <span>{book.title[0]}</span>}
+        <AuthenticatedImage src={book.cover_url} alt="" loading="lazy" fallback={<span>{book.title[0]}</span>} />
         {book.is_offline_available && (
           <span className="cover-badge" aria-label="Disponible hors ligne">
             <Bookmark size={13} aria-hidden="true" />

@@ -1,11 +1,11 @@
-import { apiBlob, type BookDetail } from "./api";
+import { apiBlob, authHeadersForUrl, type BookDetail } from "./api";
 import { db } from "./db";
 
 async function fetchOptionalBlob(url: string | null) {
   if (!url) {
     return undefined;
   }
-  const response = await fetch(url, { credentials: "include" });
+  const response = await fetch(url, { headers: authHeadersForUrl(url) });
   if (!response.ok) {
     return undefined;
   }

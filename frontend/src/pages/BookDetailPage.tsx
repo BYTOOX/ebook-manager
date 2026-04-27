@@ -26,6 +26,7 @@ import {
   type MetadataApplyField,
   type MetadataCandidate
 } from "../lib/api";
+import { AuthenticatedImage } from "../components/AuthenticatedImage";
 import { BookCard } from "../components/BookCard";
 import {
   downloadBookForOffline,
@@ -364,7 +365,7 @@ export function BookDetailPage() {
   return (
     <main className="book-detail">
       <div className="detail-cover">
-        {coverUrl ? <img src={coverUrl} alt="" /> : <span>{data.title[0]}</span>}
+        <AuthenticatedImage src={coverUrl} alt="" fallback={<span>{data.title[0]}</span>} />
       </div>
       <section className="detail-body">
         <p className="eyebrow">{data.status}</p>
@@ -562,7 +563,7 @@ export function BookDetailPage() {
                     <div>
                       <span>Actuelle</span>
                       <div className="cover-preview">
-                        {coverUrl ? <img src={coverUrl} alt="" /> : <strong>{data.title[0]}</strong>}
+                        <AuthenticatedImage src={coverUrl} alt="" fallback={<strong>{data.title[0]}</strong>} />
                       </div>
                     </div>
                     <div>
