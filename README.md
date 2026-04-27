@@ -26,9 +26,14 @@ La V1 a passe la RC locale :
 - Manifest PWA + service worker : OK
 - OpenAPI : OK
 
+## Design docs
+
+Les specs, documents de cadrage et prompts sont ranges dans [design/](design/README.md).
+
 ## Sommaire
 
 - [Fonctionnalites](#fonctionnalites)
+- [Design docs](#design-docs)
 - [Architecture](#architecture)
 - [Stack](#stack)
 - [Demarrage rapide](#demarrage-rapide)
