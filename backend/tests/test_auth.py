@@ -37,6 +37,20 @@ def teardown_function() -> None:
     shutil.rmtree(TEST_LIBRARY_PATH, ignore_errors=True)
 
 
+def authenticate_client(client: TestClient):
+    setup = client.post(
+        "/api/v1/auth/setup",
+        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
+    )
+    assert setup.status_code == 201
+    payload = setup.json()
+    assert payload["access_token"]
+    assert payload["token_type"] == "bearer"
+    assert payload["expires_in"] == 60 * 60 * 24 * 30
+    client.headers.update({"Authorization": f"Bearer {payload['access_token']}"})
+    return setup
+
+
 def test_health_endpoint() -> None:
     client = TestClient(app)
     response = client.get("/api/v1/health")
@@ -46,16 +60,26 @@ def test_health_endpoint() -> None:
 
 def test_first_user_setup_login_and_me() -> None:
     client = TestClient(app)
-    setup = client.post(
-        "/api/v1/auth/setup",
-        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
-    )
-    assert setup.status_code == 201
+    missing_auth = client.get("/api/v1/auth/me")
+    assert missing_auth.status_code == 401
+    assert missing_auth.headers["www-authenticate"] == "Bearer"
+
+    missing_books_auth = client.get("/api/v1/books")
+    assert missing_books_auth.status_code == 401
+
+    invalid_auth = client.get("/api/v1/auth/me", headers={"Authorization": "Bearer invalid"})
+    assert invalid_auth.status_code == 401
+
+    setup = authenticate_client(client)
+    assert "set-cookie" not in setup.headers
     assert setup.json()["user"]["username"] == "admin"
 
     me = client.get("/api/v1/auth/me")
     assert me.status_code == 200
     assert me.json()["display_name"] == "Aurelia"
+
+    books = client.get("/api/v1/books")
+    assert books.status_code == 200
 
     logout = client.post("/api/v1/auth/logout")
     assert logout.status_code == 200
@@ -66,14 +90,12 @@ def test_first_user_setup_login_and_me() -> None:
     )
     assert login.status_code == 200
     assert login.json()["ok"] is True
+    assert login.json()["access_token"]
 
 
 def test_reading_settings_are_persisted_and_validated() -> None:
     client = TestClient(app)
-    client.post(
-        "/api/v1/auth/setup",
-        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
-    )
+    authenticate_client(client)
 
     current = client.get("/api/v1/settings/reading")
     assert current.status_code == 200
@@ -103,10 +125,7 @@ def test_reading_settings_are_persisted_and_validated() -> None:
 
 def test_epub_upload_extracts_book_and_detects_duplicate() -> None:
     client = TestClient(app)
-    client.post(
-        "/api/v1/auth/setup",
-        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
-    )
+    authenticate_client(client)
 
     epub_bytes = make_test_epub()
     upload = client.post(
@@ -146,10 +165,7 @@ def test_epub_upload_extracts_book_and_detects_duplicate() -> None:
 
 def test_scan_imports_epubs_recursively_from_series_folders() -> None:
     client = TestClient(app)
-    client.post(
-        "/api/v1/auth/setup",
-        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
-    )
+    authenticate_client(client)
 
     series_dir = TEST_LIBRARY_PATH / "incoming" / "Nom de la serie"
     series_dir.mkdir(parents=True)
@@ -170,10 +186,7 @@ def test_scan_imports_epubs_recursively_from_series_folders() -> None:
 
 def test_scan_imports_every_epub_recursively_regardless_of_naming() -> None:
     client = TestClient(app)
-    client.post(
-        "/api/v1/auth/setup",
-        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
-    )
+    authenticate_client(client)
 
     incoming = TEST_LIBRARY_PATH / "incoming"
     files = {
@@ -212,10 +225,7 @@ def test_scan_imports_every_epub_recursively_regardless_of_naming() -> None:
 
 def test_book_search_matches_nested_original_filename() -> None:
     client = TestClient(app)
-    client.post(
-        "/api/v1/auth/setup",
-        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
-    )
+    authenticate_client(client)
 
     cherub_dir = TEST_LIBRARY_PATH / "incoming" / "CHERUB"
     cherub_dir.mkdir(parents=True)
@@ -236,10 +246,7 @@ def test_book_search_matches_nested_original_filename() -> None:
 
 def test_book_detail_cleans_description_and_lists_series_books() -> None:
     client = TestClient(app)
-    client.post(
-        "/api/v1/auth/setup",
-        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
-    )
+    authenticate_client(client)
 
     cherub_dir = TEST_LIBRARY_PATH / "incoming" / "CHERUB"
     cherub_dir.mkdir(parents=True)
@@ -271,10 +278,7 @@ def test_book_detail_cleans_description_and_lists_series_books() -> None:
 
 def test_progress_endpoint_and_sync_event_update_reading_progress() -> None:
     client = TestClient(app)
-    client.post(
-        "/api/v1/auth/setup",
-        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
-    )
+    authenticate_client(client)
 
     upload = client.post(
         "/api/v1/books/upload",
@@ -341,10 +345,7 @@ def test_progress_endpoint_and_sync_event_update_reading_progress() -> None:
 
 def test_sync_progress_returns_server_winner_for_stale_event() -> None:
     client = TestClient(app)
-    client.post(
-        "/api/v1/auth/setup",
-        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
-    )
+    authenticate_client(client)
 
     upload = client.post(
         "/api/v1/books/upload",
@@ -395,10 +396,7 @@ def test_sync_progress_returns_server_winner_for_stale_event() -> None:
 
 def test_sync_bookmark_create_conflict_and_delete() -> None:
     client = TestClient(app)
-    client.post(
-        "/api/v1/auth/setup",
-        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
-    )
+    authenticate_client(client)
 
     upload = client.post(
         "/api/v1/books/upload",
@@ -501,10 +499,7 @@ def test_sync_bookmark_create_conflict_and_delete() -> None:
 
 def test_book_patch_updates_metadata_authors_and_series() -> None:
     client = TestClient(app)
-    client.post(
-        "/api/v1/auth/setup",
-        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
-    )
+    authenticate_client(client)
 
     upload = client.post(
         "/api/v1/books/upload",
@@ -544,10 +539,7 @@ def test_book_patch_updates_metadata_authors_and_series() -> None:
 
 def test_book_list_rating_sort_keeps_unrated_books_last() -> None:
     client = TestClient(app)
-    client.post(
-        "/api/v1/auth/setup",
-        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
-    )
+    authenticate_client(client)
 
     low = client.post(
         "/api/v1/books/upload",
@@ -579,10 +571,7 @@ def test_book_list_rating_sort_keeps_unrated_books_last() -> None:
 
 def test_metadata_apply_updates_selected_fields_from_provider_result() -> None:
     client = TestClient(app)
-    client.post(
-        "/api/v1/auth/setup",
-        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
-    )
+    authenticate_client(client)
 
     upload = client.post(
         "/api/v1/books/upload",
@@ -647,10 +636,7 @@ def test_metadata_apply_updates_selected_fields_from_provider_result() -> None:
 
 def test_metadata_apply_cover_replaces_file_and_bumps_cover_url(monkeypatch) -> None:
     client = TestClient(app)
-    client.post(
-        "/api/v1/auth/setup",
-        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
-    )
+    authenticate_client(client)
 
     upload = client.post(
         "/api/v1/books/upload",
@@ -732,10 +718,7 @@ def test_google_books_cover_url_prefers_high_resolution_without_page_curl() -> N
 
 def test_organization_collections_series_and_tags() -> None:
     client = TestClient(app)
-    client.post(
-        "/api/v1/auth/setup",
-        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
-    )
+    authenticate_client(client)
 
     first = client.post(
         "/api/v1/books/upload",
@@ -803,10 +786,7 @@ def test_organization_collections_series_and_tags() -> None:
 
 def test_organization_series_materializes_import_path_series() -> None:
     client = TestClient(app)
-    client.post(
-        "/api/v1/auth/setup",
-        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
-    )
+    authenticate_client(client)
 
     series_dir = TEST_LIBRARY_PATH / "incoming" / "CHERUB"
     series_dir.mkdir(parents=True)
@@ -835,10 +815,7 @@ def test_organization_series_materializes_import_path_series() -> None:
 
 def test_series_index_does_not_treat_title_number_as_volume() -> None:
     client = TestClient(app)
-    client.post(
-        "/api/v1/auth/setup",
-        json={"username": "admin", "password": "very-secure-password", "display_name": "Aurelia"},
-    )
+    authenticate_client(client)
 
     cherub_dir = TEST_LIBRARY_PATH / "incoming" / "CHERUB"
     cherub_dir.mkdir(parents=True)

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -38,5 +37,7 @@ class AuthStatus(BaseModel):
 
 class LoginResponse(BaseModel):
     ok: bool
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
     user: UserRead
-    expires_at: datetime | None = None

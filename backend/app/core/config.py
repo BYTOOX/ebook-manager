@@ -16,10 +16,7 @@ class Settings(BaseSettings):
     LIBRARY_PATH: Path = Path("/data/library")
     INCOMING_PATH: Path = Path("/data/library/incoming")
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173"
-    SESSION_COOKIE_NAME: str = "aurelia_session"
-    SESSION_COOKIE_SECURE: bool = False
-    SESSION_COOKIE_SAMESITE: str = "lax"
-    SESSION_EXPIRE_MINUTES: int = 60 * 24 * 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 30
     FIRST_USER_SETUP_TOKEN: str | None = None
     MAX_UPLOAD_SIZE_MB: int = 200
     METADATA_OPENLIBRARY_ENABLED: bool = True

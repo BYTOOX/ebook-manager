@@ -166,7 +166,7 @@ ebookmanager/
 - Alembic
 - PostgreSQL 16
 - Pydantic v2
-- HTTP-only session cookie
+- JWT Bearer auth
 - Pillow
 - EbookLib
 
@@ -427,6 +427,15 @@ Base URL :
 http://localhost:8000/api/v1
 ```
 
+Authentification :
+
+```http
+Authorization: Bearer <access_token>
+```
+
+`POST /auth/setup` et `POST /auth/login` retournent `access_token`, `token_type: "bearer"` et `expires_in`.
+Le frontend stocke le token en `localStorage`. Pour une instance personnelle auto-hebergee, ce compromis est accepte en V1 ; utiliser HTTPS en production et une CSP restrictive.
+
 Endpoints principaux :
 
 ```txt
@@ -507,13 +516,13 @@ SECRET_KEY=change-me-generate-a-long-random-secret
 LIBRARY_PATH=/data/library
 INCOMING_PATH=/data/library/incoming
 CORS_ORIGINS=http://localhost:3000,http://localhost:5173
-SESSION_COOKIE_SECURE=false
+ACCESS_TOKEN_EXPIRE_MINUTES=43200
 MAX_UPLOAD_SIZE_MB=200
 METADATA_OPENLIBRARY_ENABLED=true
 METADATA_GOOGLEBOOKS_ENABLED=true
 ```
 
-En production, remplacer `SECRET_KEY`, adapter `APP_URL`, `API_URL`, `CORS_ORIGINS`, et activer `SESSION_COOKIE_SECURE=true` derriere HTTPS.
+En production, remplacer `SECRET_KEY`, adapter `APP_URL`, `API_URL`, `CORS_ORIGINS`, et servir l'application derriere HTTPS.
 
 ## Tests RC
 

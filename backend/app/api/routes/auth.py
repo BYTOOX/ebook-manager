@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, HTTPException, status
 
 from app.api.deps import CurrentUser, DbSession
 from app.core.config import get_settings
-from app.core.security import create_session_token
+from app.core.security import create_access_token
 from app.schemas.auth import LoginRequest, LoginResponse, PasswordChangeRequest, SetupRequest, UserRead
 from app.services.user_service import (
     authenticate_user,
@@ -16,20 +16,19 @@ from app.services.user_service import (
 router = APIRouter()
 
 
-def set_session_cookie(response: Response, token: str) -> None:
+def build_login_response(user) -> LoginResponse:
     settings = get_settings()
-    response.set_cookie(
-        key=settings.SESSION_COOKIE_NAME,
-        value=token,
-        max_age=settings.SESSION_EXPIRE_MINUTES * 60,
-        httponly=True,
-        secure=settings.SESSION_COOKIE_SECURE,
-        samesite=settings.SESSION_COOKIE_SAMESITE,
+    return LoginResponse(
+        ok=True,
+        access_token=create_access_token(user.id),
+        token_type="bearer",
+        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        user=UserRead.model_validate(user),
     )
 
 
 @router.post("/setup", response_model=LoginResponse, status_code=status.HTTP_201_CREATED)
-def setup_first_user(payload: SetupRequest, response: Response, db: DbSession) -> LoginResponse:
+def setup_first_user(payload: SetupRequest, db: DbSession) -> LoginResponse:
     settings = get_settings()
     if has_any_user(db):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Setup already completed")
@@ -37,24 +36,20 @@ def setup_first_user(payload: SetupRequest, response: Response, db: DbSession) -
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid setup token")
 
     user = create_user(db, payload.username, payload.password, payload.display_name)
-    set_session_cookie(response, create_session_token(user.id))
-    return LoginResponse(ok=True, user=UserRead.model_validate(user))
+    return build_login_response(user)
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(payload: LoginRequest, response: Response, db: DbSession) -> LoginResponse:
+def login(payload: LoginRequest, db: DbSession) -> LoginResponse:
     user = authenticate_user(db, payload.username, payload.password)
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
-    set_session_cookie(response, create_session_token(user.id))
-    return LoginResponse(ok=True, user=UserRead.model_validate(user))
+    return build_login_response(user)
 
 
 @router.post("/logout")
-def logout(response: Response) -> dict[str, bool]:
-    settings = get_settings()
-    response.delete_cookie(settings.SESSION_COOKIE_NAME)
+def logout() -> dict[str, bool]:
     return {"ok": True}
 
 
