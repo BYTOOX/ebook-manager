@@ -19,14 +19,17 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -76,8 +79,11 @@ import ch.bytoox.aureliareader.data.repositories.ProgressRepository
 import ch.bytoox.aureliareader.data.sync.ProgressSyncScheduler
 import ch.bytoox.aureliareader.ui.theme.AureliaReaderTheme
 import java.io.File
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -92,13 +98,14 @@ import org.readium.r2.shared.publication.Locator
 class ReadiumReaderActivity : FragmentActivity() {
     private var currentPublication: org.readium.r2.shared.publication.Publication? = null
     private lateinit var progressRepository: ProgressRepository
+    private var readerChromeVisible: Boolean = false
     internal var activeBookId: String = ""
         private set
 
     override fun onCreate(savedInstanceState: Bundle?) {
         supportFragmentManager.fragmentFactory = EpubNavigatorFragment.createDummyFactory()
         super.onCreate(savedInstanceState)
-        configureFullscreen()
+        configureSystemBars()
         useSystemBrightness()
 
         activeBookId = intent.getStringExtra(EXTRA_BOOK_ID).orEmpty()
@@ -124,7 +131,7 @@ class ReadiumReaderActivity : FragmentActivity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) {
-            hideSystemBars()
+            setReaderChromeVisible(readerChromeVisible)
         }
     }
 
@@ -197,12 +204,31 @@ class ReadiumReaderActivity : FragmentActivity() {
         )
     }
 
-    private fun configureFullscreen() {
+    private fun configureSystemBars() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        hideSystemBars()
+        window.statusBarColor = android.graphics.Color.BLACK
+        window.navigationBarColor = android.graphics.Color.BLACK
+        hideReaderSystemBars()
     }
 
-    private fun hideSystemBars() {
+    internal fun setReaderChromeVisible(visible: Boolean) {
+        readerChromeVisible = visible
+        if (visible) {
+            showReaderStatusBar()
+        } else {
+            hideReaderSystemBars()
+        }
+    }
+
+    private fun showReaderStatusBar() {
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            show(WindowInsetsCompat.Type.statusBars())
+            hide(WindowInsetsCompat.Type.navigationBars())
+        }
+    }
+
+    private fun hideReaderSystemBars() {
         WindowInsetsControllerCompat(window, window.decorView).apply {
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             hide(WindowInsetsCompat.Type.systemBars())
@@ -258,12 +284,25 @@ private fun ReadiumReaderScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var progressLabel by remember { mutableStateOf("0%") }
     var chapterLabel by remember { mutableStateOf("Debut") }
+    var clockLabel by remember { mutableStateOf(currentTimeLabel()) }
     var tocItems by remember { mutableStateOf(emptyList<TocItem>()) }
     var lastThemePatchHref by remember { mutableStateOf<String?>(null) }
+    val readerChromeVisible = (overlayVisible && error == null) || settingsVisible || chaptersVisible || isLoading || error != null
 
     DisposableEffect(containerId) {
         onDispose {
             activity.removeNavigator()
+        }
+    }
+
+    LaunchedEffect(readerChromeVisible) {
+        activity.setReaderChromeVisible(readerChromeVisible)
+    }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            clockLabel = currentTimeLabel()
+            delay(30_000)
         }
     }
 
@@ -394,6 +433,7 @@ private fun ReadiumReaderScreen(
                 title = title,
                 progressLabel = progressLabel,
                 chapterLabel = chapterLabel,
+                timeLabel = clockLabel,
                 onBack = onBack,
                 onSettings = { settingsVisible = !settingsVisible },
                 onOpenChapters = { chaptersVisible = true },
@@ -482,6 +522,7 @@ private fun ReaderOverlay(
     title: String,
     progressLabel: String,
     chapterLabel: String,
+    timeLabel: String,
     onBack: () -> Unit,
     onSettings: () -> Unit,
     onOpenChapters: () -> Unit,
@@ -496,7 +537,8 @@ private fun ReaderOverlay(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 12.dp),
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
             contentColor = overlayText,
             tonalElevation = 6.dp,
@@ -523,6 +565,12 @@ private fun ReaderOverlay(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
+                Text(
+                    text = timeLabel,
+                    color = overlayMuted,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
                 IconButton(onClick = onSettings, modifier = Modifier.size(44.dp)) {
                     Icon(
                         Icons.Outlined.Settings,
@@ -537,7 +585,8 @@ private fun ReaderOverlay(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 14.dp),
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
             contentColor = overlayText,
             tonalElevation = 6.dp,
@@ -591,22 +640,23 @@ private fun ReaderSettingsMenu(
         Surface(
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(top = 68.dp, start = 20.dp, end = 10.dp)
-                .fillMaxWidth(0.74f)
-                .widthIn(max = 276.dp),
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(top = 54.dp, start = 20.dp, end = 10.dp)
+                .fillMaxWidth(0.70f)
+                .widthIn(max = 260.dp),
             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
             contentColor = gold,
             tonalElevation = 6.dp,
-            shape = RoundedCornerShape(18.dp),
+            shape = RoundedCornerShape(12.dp),
             border = BorderStroke(1.dp, gold.copy(alpha = 0.18f))
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 430.dp)
+                    .heightIn(max = 360.dp)
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
                     "Reglages",
@@ -896,6 +946,10 @@ private val ReaderFont.label: String
 
 private fun formatDecimal(value: Double): String {
     return String.format(Locale.US, "%.1f", value)
+}
+
+private fun currentTimeLabel(): String {
+    return LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
 }
 
 private fun buildContentThemeScript(theme: ReaderContentTheme): String {

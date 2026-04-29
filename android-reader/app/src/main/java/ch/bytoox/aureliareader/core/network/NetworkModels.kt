@@ -79,6 +79,59 @@ data class BookListResponseDto(
     val total: Int
 )
 
+data class BookUpdateDto(
+    val title: String? = null,
+    val authors: List<String>? = null,
+    val seriesName: String? = null,
+    val seriesIndex: Float? = null,
+    val tags: List<String>? = null,
+    val status: String? = null,
+    val rating: Int? = null,
+    val favorite: Boolean? = null
+)
+
+data class UploadBookResponseDto(
+    val jobId: String,
+    val bookId: String?,
+    val status: String,
+    val warning: String?
+)
+
+data class CollectionSummaryDto(
+    val id: String,
+    val name: String,
+    val description: String?,
+    val bookCount: Int,
+    val coverUrl: String?
+)
+
+data class CollectionListResponseDto(
+    val items: List<CollectionSummaryDto>,
+    val total: Int
+)
+
+data class SeriesSummaryDto(
+    val id: String,
+    val name: String,
+    val description: String?,
+    val bookCount: Int,
+    val coverUrl: String?
+)
+
+data class SeriesListResponseDto(
+    val items: List<SeriesSummaryDto>,
+    val total: Int
+)
+
+data class SeriesDetailDto(
+    val id: String,
+    val name: String,
+    val description: String?,
+    val bookCount: Int,
+    val coverUrl: String?,
+    val books: List<BookListItemDto>
+)
+
 data class SyncEventUploadDto(
     val eventId: String,
     val type: String,

@@ -38,6 +38,7 @@ import ch.bytoox.aureliareader.ui.screens.HomeScreen
 import ch.bytoox.aureliareader.ui.screens.LibraryScreen
 import ch.bytoox.aureliareader.ui.screens.LoginScreen
 import ch.bytoox.aureliareader.ui.screens.LoadingScreen
+import ch.bytoox.aureliareader.ui.screens.OrganizationScreen
 import ch.bytoox.aureliareader.ui.screens.ServerSetupScreen
 import ch.bytoox.aureliareader.ui.screens.SettingsScreen
 
@@ -52,6 +53,9 @@ private val bottomRoutes = listOf(
         Icon(Icons.Outlined.Home, contentDescription = null)
     },
     BottomRoute(Route.Library, "Bibliotheque") {
+        Icon(Icons.AutoMirrored.Outlined.LibraryBooks, contentDescription = null)
+    },
+    BottomRoute(Route.Organization, "Organisation") {
         Icon(Icons.AutoMirrored.Outlined.LibraryBooks, contentDescription = null)
     },
     BottomRoute(Route.Settings, "Reglages") {
@@ -217,13 +221,24 @@ fun AppNavGraph(appViewModel: AppViewModel) {
                     offlineBookIds = uiState.offlineBookIds,
                     isOfflineMode = uiState.isOfflineMode,
                     isLoading = uiState.isLoadingBooks,
+                    isReconnecting = uiState.isReconnecting,
+                    isMutatingBook = uiState.isMutatingBook,
                     error = uiState.booksError,
+                    actionMessage = uiState.bookActionMessage,
+                    actionError = uiState.bookActionError,
                     onRefresh = appViewModel::refreshBooks,
+                    onReconnect = appViewModel::reconnectServer,
                     onOpenLibrary = { navController.navigate(Route.Library.path) },
                     onOpenBook = { book ->
                         appViewModel.openBook(book.id)
                         navController.navigate(Route.BookDetail.path)
-                    }
+                    },
+                    onReadBook = { book -> appViewModel.openBookAndRead(book.id) },
+                    onDownloadBook = { book -> appViewModel.downloadBook(book.id) },
+                    onRemoveDownload = { book -> appViewModel.removeBookDownload(book.id) },
+                    onMarkFinished = { book -> appViewModel.markBookFinished(book.id) },
+                    onToggleFavorite = appViewModel::toggleFavorite,
+                    onRenameBook = { book, title -> appViewModel.renameBook(book.id, title) }
                 )
             }
             composable(Route.Library.path) {
@@ -236,13 +251,51 @@ fun AppNavGraph(appViewModel: AppViewModel) {
                     isOfflineMode = uiState.isOfflineMode,
                     isLoading = uiState.isLoadingBooks,
                     isLoadingMore = uiState.isLoadingMoreBooks,
+                    isReconnecting = uiState.isReconnecting,
+                    isMutatingBook = uiState.isMutatingBook,
                     error = uiState.booksError,
+                    actionMessage = uiState.bookActionMessage,
+                    actionError = uiState.bookActionError,
                     onSearch = appViewModel::searchBooks,
                     onRefresh = appViewModel::refreshBooks,
+                    onReconnect = appViewModel::reconnectServer,
                     onLoadMore = appViewModel::loadMoreBooks,
                     onOpenBook = { book ->
                         appViewModel.openBook(book.id)
                         navController.navigate(Route.BookDetail.path)
+                    },
+                    onReadBook = { book -> appViewModel.openBookAndRead(book.id) },
+                    onDownloadBook = { book -> appViewModel.downloadBook(book.id) },
+                    onRemoveDownload = { book -> appViewModel.removeBookDownload(book.id) },
+                    onMarkFinished = { book -> appViewModel.markBookFinished(book.id) },
+                    onToggleFavorite = appViewModel::toggleFavorite,
+                    onRenameBook = { book, title -> appViewModel.renameBook(book.id, title) }
+                )
+            }
+            composable(Route.Organization.path) {
+                LaunchedEffect(uiState.isOfflineMode, uiState.collections.size, uiState.series.size) {
+                    if (!uiState.isOfflineMode && uiState.collections.isEmpty() && uiState.series.isEmpty()) {
+                        appViewModel.loadOrganization()
+                    }
+                }
+                OrganizationScreen(
+                    collections = uiState.collections,
+                    series = uiState.series,
+                    selectedSeries = uiState.selectedSeries,
+                    isLoadingSeriesDetail = uiState.isLoadingSeriesDetail,
+                    seriesDetailError = uiState.selectedSeriesError,
+                    accessToken = uiState.accessToken,
+                    isOfflineMode = uiState.isOfflineMode,
+                    isLoading = uiState.isLoadingOrganization,
+                    error = uiState.organizationError,
+                    onRefresh = appViewModel::loadOrganization,
+                    onOpenSeries = { series -> appViewModel.openSeries(series.id) },
+                    onDismissSeries = appViewModel::dismissSeries,
+                    onOpenBook = { book ->
+                        appViewModel.openBook(book.id)
+                        navController.navigate(Route.BookDetail.path) {
+                            launchSingleTop = true
+                        }
                     }
                 )
             }
@@ -261,17 +314,37 @@ fun AppNavGraph(appViewModel: AppViewModel) {
                     readerPrepareProgress = uiState.readerPrepareProgress,
                     readerError = uiState.readerError,
                     isOfflineMode = uiState.isOfflineMode,
+                    isMutatingBook = uiState.isMutatingBook,
                     isLoading = uiState.isLoadingBookDetail,
                     error = uiState.selectedBookError,
+                    actionMessage = uiState.bookActionMessage,
+                    actionError = uiState.bookActionError,
                     onRead = appViewModel::openSelectedBookReader,
                     onDownload = appViewModel::downloadSelectedBook,
                     onRemoveDownload = appViewModel::removeSelectedBookDownload,
+                    onMarkFinished = {
+                        uiState.selectedBook?.id?.let(appViewModel::markBookFinished)
+                    },
+                    onUpdateBook = { title, status, rating, favorite ->
+                        uiState.selectedBook?.id?.let { bookId ->
+                            appViewModel.updateBookBasics(
+                                bookId = bookId,
+                                title = title,
+                                status = status,
+                                ratingText = rating,
+                                favorite = favorite
+                            )
+                        }
+                    },
                     onBack = { navController.popBackStack() },
                     onRetry = {
                         uiState.selectedBookId?.let(appViewModel::openBook)
                     },
                     onOpenRelatedBook = { book ->
                         appViewModel.openBook(book.id)
+                        navController.navigate(Route.BookDetail.path) {
+                            launchSingleTop = true
+                        }
                     }
                 )
             }
@@ -280,8 +353,17 @@ fun AppNavGraph(appViewModel: AppViewModel) {
                     serverUrl = uiState.serverUrl,
                     username = uiState.currentUser?.username,
                     isOfflineMode = uiState.isOfflineMode,
+                    offlineBookCount = uiState.offlineBookCount,
+                    collectionsCount = uiState.collections.size,
+                    seriesCount = uiState.series.size,
                     sessionMessage = uiState.sessionMessage,
+                    importMessage = uiState.importMessage,
+                    actionError = uiState.bookActionError,
+                    isImportingBook = uiState.isImportingBook,
+                    isReconnecting = uiState.isReconnecting,
                     isLoggingOut = uiState.isLoggingOut,
+                    onReconnect = appViewModel::reconnectServer,
+                    onImportBook = appViewModel::importBook,
                     onLogout = {
                         appViewModel.logout {
                             navController.navigate(Route.Login.path) {

@@ -1,12 +1,19 @@
 package ch.bytoox.aureliareader.ui.app
 
+import android.content.ContentResolver
 import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
 import ch.bytoox.aureliareader.core.files.BookFileStore
 import ch.bytoox.aureliareader.core.network.ApiClient
 import ch.bytoox.aureliareader.core.network.ApiException
 import ch.bytoox.aureliareader.core.network.AuthSession
 import ch.bytoox.aureliareader.core.network.BookDetailDto
 import ch.bytoox.aureliareader.core.network.BookListItemDto
+import ch.bytoox.aureliareader.core.network.BookUpdateDto
+import ch.bytoox.aureliareader.core.network.CollectionSummaryDto
+import ch.bytoox.aureliareader.core.network.SeriesDetailDto
+import ch.bytoox.aureliareader.core.network.SeriesSummaryDto
 import ch.bytoox.aureliareader.core.network.UserDto
 import ch.bytoox.aureliareader.core.storage.ServerSettingsStore
 import ch.bytoox.aureliareader.core.storage.TokenStore
@@ -21,12 +28,16 @@ import ch.bytoox.aureliareader.data.repositories.LibraryRepository
 import ch.bytoox.aureliareader.data.repositories.ProgressRepository
 import ch.bytoox.aureliareader.data.sync.ProgressSyncScheduler
 import java.io.IOException
+import java.time.Instant
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 enum class DownloadStatus {
     Idle,
@@ -76,6 +87,19 @@ data class AppUiState(
     val readerPrepareProgress: Int? = null,
     val readerError: String? = null,
     val readerLaunchRequest: ReaderLaunchRequest? = null,
+    val collections: List<CollectionSummaryDto> = emptyList(),
+    val series: List<SeriesSummaryDto> = emptyList(),
+    val selectedSeries: SeriesDetailDto? = null,
+    val selectedSeriesError: String? = null,
+    val isLoadingSeriesDetail: Boolean = false,
+    val isLoadingOrganization: Boolean = false,
+    val organizationError: String? = null,
+    val isImportingBook: Boolean = false,
+    val importMessage: String? = null,
+    val bookActionMessage: String? = null,
+    val bookActionError: String? = null,
+    val isMutatingBook: Boolean = false,
+    val isReconnecting: Boolean = false,
     val isCheckingServer: Boolean = false,
     val isLoggingIn: Boolean = false,
     val isLoggingOut: Boolean = false
@@ -192,6 +216,7 @@ class AppViewModel(
                 refreshOfflineBookIds()
                 ProgressSyncScheduler.enqueue(appContext)
                 loadBooks(reset = true)
+                loadOrganization()
                 onSuccess()
             }.onFailure { error ->
                 _uiState.update {
@@ -224,6 +249,74 @@ class AppViewModel(
         }
     }
 
+    fun reconnectServer() {
+        val serverUrl = uiState.value.serverUrl.trim()
+        if (serverUrl.isBlank()) {
+            _uiState.update {
+                it.copy(
+                    serverError = "URL serveur requise.",
+                    bookActionError = "URL serveur requise."
+                )
+            }
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    isReconnecting = true,
+                    isCheckingServer = true,
+                    serverError = null,
+                    booksError = null,
+                    bookActionError = null,
+                    sessionMessage = null
+                )
+            }
+
+            runCatching {
+                val health = authRepository.checkServer(serverUrl)
+                val user = if (uiState.value.accessToken.isNotBlank()) {
+                    authRepository.currentUser(serverUrl)
+                } else {
+                    null
+                }
+                health to user
+            }.onSuccess { (health, user) ->
+                _uiState.update {
+                    it.copy(
+                        currentUser = user,
+                        isOfflineMode = user == null && it.isOfflineMode,
+                        serverStatus = "${health.app} repond: ${health.status}",
+                        sessionMessage = if (user != null) {
+                            "Reconnecte au serveur."
+                        } else {
+                            "Serveur disponible, reconnecte-toi."
+                        },
+                        isCheckingServer = false,
+                        isReconnecting = false
+                    )
+                }
+                if (user != null) {
+                    ProgressSyncScheduler.enqueue(appContext)
+                    refreshOfflineBookIds()
+                    refreshLocalProgress()
+                    loadBooks(reset = true)
+                    loadOrganization()
+                }
+            }.onFailure { error ->
+                handleApiFailure(error)
+                _uiState.update {
+                    it.copy(
+                        serverError = error.toFriendlyMessage(),
+                        bookActionError = error.toFriendlyMessage(),
+                        isCheckingServer = false,
+                        isReconnecting = false
+                    )
+                }
+            }
+        }
+    }
+
     fun logout(onLoggedOut: () -> Unit) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoggingOut = true, sessionMessage = null) }
@@ -249,6 +342,12 @@ class AppViewModel(
                     readerPrepareProgress = null,
                     readerError = null,
                     readerLaunchRequest = null,
+                    collections = emptyList(),
+                    series = emptyList(),
+                    organizationError = null,
+                    importMessage = null,
+                    bookActionMessage = null,
+                    bookActionError = null,
                     isLoggingOut = false,
                     sessionMessage = "Session supprimee localement."
                 )
@@ -278,6 +377,336 @@ class AppViewModel(
             return
         }
         loadBooks(reset = false)
+    }
+
+    fun loadOrganization() {
+        val state = uiState.value
+        val serverUrl = state.serverUrl
+        if (state.isOfflineMode || serverUrl.isBlank() || state.accessToken.isBlank()) {
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    isLoadingOrganization = true,
+                    organizationError = null
+                )
+            }
+
+            runCatching {
+                libraryRepository.listCollections(serverUrl) to libraryRepository.listSeries(serverUrl)
+            }.onSuccess { (collections, series) ->
+                _uiState.update {
+                    it.copy(
+                        collections = collections.items,
+                        series = series.items,
+                        isLoadingOrganization = false,
+                        organizationError = null
+                    )
+                }
+            }.onFailure { error ->
+                handleApiFailure(error)
+                _uiState.update {
+                    it.copy(
+                        isLoadingOrganization = false,
+                        organizationError = error.toFriendlyMessage()
+                    )
+                }
+            }
+        }
+    }
+
+    fun openSeries(seriesId: String) {
+        val state = uiState.value
+        val serverUrl = state.serverUrl
+        if (state.isOfflineMode || serverUrl.isBlank() || state.accessToken.isBlank()) {
+            _uiState.update { it.copy(selectedSeriesError = "Reconnecte Aurelia pour ouvrir cette serie.") }
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    selectedSeries = null,
+                    selectedSeriesError = null,
+                    isLoadingSeriesDetail = true
+                )
+            }
+
+            runCatching {
+                libraryRepository.getSeries(serverUrl, seriesId)
+            }.onSuccess { series ->
+                _uiState.update {
+                    it.copy(
+                        selectedSeries = series,
+                        selectedSeriesError = null,
+                        isLoadingSeriesDetail = false
+                    )
+                }
+            }.onFailure { error ->
+                handleApiFailure(error)
+                _uiState.update {
+                    it.copy(
+                        selectedSeries = null,
+                        selectedSeriesError = error.toFriendlyMessage(),
+                        isLoadingSeriesDetail = false
+                    )
+                }
+            }
+        }
+    }
+
+    fun dismissSeries() {
+        _uiState.update {
+            it.copy(
+                selectedSeries = null,
+                selectedSeriesError = null,
+                isLoadingSeriesDetail = false
+            )
+        }
+    }
+
+    fun openBookAndRead(bookId: String) {
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    isPreparingReader = true,
+                    readerPrepareProgress = 0,
+                    readerError = null,
+                    bookActionError = null,
+                    bookActionMessage = null
+                )
+            }
+
+            runCatching {
+                val book = loadBookDetailForAction(bookId)
+                    ?: error("Livre indisponible.")
+                val filePath = downloadRepository.prepareBookForReading(uiState.value.serverUrl, book) { progress ->
+                    _uiState.update { state -> state.copy(readerPrepareProgress = progress.coerceIn(0, 100)) }
+                }
+                book to filePath
+            }.onSuccess { (book, filePath) ->
+                _uiState.update {
+                    it.copy(
+                        selectedBookId = book.id,
+                        selectedBook = book.withLocalProgress(it.localProgress),
+                        isPreparingReader = false,
+                        readerPrepareProgress = null,
+                        readerError = null,
+                        readerLaunchRequest = ReaderLaunchRequest(
+                            requestId = System.currentTimeMillis(),
+                            bookId = book.id,
+                            title = book.title,
+                            filePath = filePath
+                        )
+                    )
+                }
+            }.onFailure { error ->
+                _uiState.update {
+                    it.copy(
+                        isPreparingReader = false,
+                        readerPrepareProgress = null,
+                        readerError = error.toFriendlyMessage(),
+                        bookActionError = error.toFriendlyMessage()
+                    )
+                }
+            }
+        }
+    }
+
+    fun downloadBook(bookId: String) {
+        val state = uiState.value
+        if (state.isOfflineMode) {
+            _uiState.update { it.copy(bookActionError = "Telechargement indisponible en mode hors ligne.") }
+            return
+        }
+        if (state.serverUrl.isBlank()) {
+            _uiState.update { it.copy(bookActionError = "Serveur non configure.") }
+            return
+        }
+
+        viewModelScope.launch {
+            val result = runCatching {
+                libraryRepository.getBook(state.serverUrl, bookId)
+            }
+            val book = result.getOrElse { error ->
+                handleApiFailure(error)
+                _uiState.update { it.copy(bookActionError = error.toFriendlyMessage()) }
+                return@launch
+            }
+            downloadBookDetail(book)
+        }
+    }
+
+    fun markBookFinished(bookId: String) {
+        val state = uiState.value
+        if (state.isOfflineMode || state.serverUrl.isBlank() || state.accessToken.isBlank()) {
+            _uiState.update { it.copy(bookActionError = "Reconnecte Aurelia avant de marquer le livre comme lu.") }
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    isMutatingBook = true,
+                    bookActionError = null,
+                    bookActionMessage = null
+                )
+            }
+
+            val progressPayload = finishedProgressPayload()
+            val result = runCatching {
+                progressRepository.saveProgress(
+                    bookId = bookId,
+                    locatorJson = "{}",
+                    progressPercent = 100f,
+                    chapterLabel = "Termine"
+                )
+                val updated = libraryRepository.updateBook(
+                    serverUrl = state.serverUrl,
+                    bookId = bookId,
+                    payload = BookUpdateDto(status = "finished")
+                )
+                runCatching {
+                    libraryRepository.putBookProgress(
+                        serverUrl = state.serverUrl,
+                        bookId = bookId,
+                        payloadJson = progressPayload
+                    )
+                }
+                ProgressSyncScheduler.enqueue(appContext)
+                updated
+            }
+
+            val updated = result.getOrElse { error ->
+                handleApiFailure(error)
+                _uiState.update {
+                    it.copy(
+                        isMutatingBook = false,
+                        bookActionError = error.toFriendlyMessage()
+                    )
+                }
+                return@launch
+            }
+
+            downloadRepository.updateLocalMetadata(updated.copy(status = "finished", progressPercent = 100f))
+            val progress = loadLocalProgress()
+            _uiState.update {
+                val finishedDetail = updated.copy(status = "finished", progressPercent = 100f)
+                    .withLocalProgress(progress)
+                val finishedListItem = updated.toListItem()
+                    .copy(status = "finished", progressPercent = 100f)
+                it.copy(
+                    localProgress = progress,
+                    selectedBook = if (it.selectedBook?.id == updated.id) {
+                        finishedDetail
+                    } else {
+                        it.selectedBook
+                    },
+                    books = it.books.replace(finishedListItem).withLocalProgress(progress),
+                    isMutatingBook = false,
+                    bookActionMessage = "Livre marque comme lu a 100%."
+                )
+            }
+            loadOrganization()
+        }
+    }
+
+    fun toggleFavorite(book: BookListItemDto) {
+        updateBook(
+            bookId = book.id,
+            payload = BookUpdateDto(favorite = !book.favorite),
+            successMessage = if (book.favorite) "Livre retire des favoris." else "Livre ajoute aux favoris."
+        )
+    }
+
+    fun renameBook(bookId: String, title: String) {
+        val cleanTitle = title.trim()
+        if (cleanTitle.isBlank()) {
+            _uiState.update { it.copy(bookActionError = "Le titre est requis.") }
+            return
+        }
+        updateBook(
+            bookId = bookId,
+            payload = BookUpdateDto(title = cleanTitle),
+            successMessage = "Titre mis a jour."
+        )
+    }
+
+    fun updateBookBasics(
+        bookId: String,
+        title: String,
+        status: String,
+        ratingText: String,
+        favorite: Boolean
+    ) {
+        val cleanTitle = title.trim()
+        val cleanStatus = status.trim()
+        val rating = ratingText.trim().takeIf { it.isNotBlank() }?.toIntOrNull()
+        if (cleanTitle.isBlank()) {
+            _uiState.update { it.copy(bookActionError = "Le titre est requis.") }
+            return
+        }
+        if (cleanStatus !in setOf("unread", "in_progress", "finished", "abandoned")) {
+            _uiState.update { it.copy(bookActionError = "Statut invalide.") }
+            return
+        }
+        if (ratingText.isNotBlank() && (rating == null || rating !in 0..5)) {
+            _uiState.update { it.copy(bookActionError = "La note doit etre entre 0 et 5.") }
+            return
+        }
+
+        updateBook(
+            bookId = bookId,
+            payload = BookUpdateDto(
+                title = cleanTitle,
+                status = cleanStatus,
+                rating = rating,
+                favorite = favorite
+            ),
+            successMessage = "Livre mis a jour."
+        )
+    }
+
+    fun importBook(uri: Uri) {
+        val state = uiState.value
+        if (state.isOfflineMode || state.serverUrl.isBlank() || state.accessToken.isBlank()) {
+            _uiState.update { it.copy(bookActionError = "Reconnecte Aurelia avant d'importer un EPUB.") }
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    isImportingBook = true,
+                    importMessage = null,
+                    bookActionError = null
+                )
+            }
+
+            runCatching {
+                val upload = readImportFile(appContext.contentResolver, uri)
+                libraryRepository.uploadBook(state.serverUrl, upload.filename, upload.bytes)
+            }.onSuccess { response ->
+                _uiState.update {
+                    it.copy(
+                        isImportingBook = false,
+                        importMessage = response.warning
+                            ?: if (response.bookId != null) "EPUB importe." else "Import termine: ${response.status}."
+                    )
+                }
+                loadBooks(reset = true)
+                loadOrganization()
+            }.onFailure { error ->
+                _uiState.update {
+                    it.copy(
+                        isImportingBook = false,
+                        bookActionError = error.toFriendlyMessage()
+                    )
+                }
+            }
+        }
     }
 
     fun openBook(bookId: String) {
@@ -408,7 +837,10 @@ class AppViewModel(
 
     fun removeSelectedBookDownload() {
         val bookId = uiState.value.selectedBook?.id ?: return
+        removeBookDownload(bookId)
+    }
 
+    fun removeBookDownload(bookId: String) {
         viewModelScope.launch {
             runCatching {
                 downloadRepository.removeDownload(bookId)
@@ -421,6 +853,9 @@ class AppViewModel(
                         isOfflineMode = it.isOfflineMode && offlineIds.isNotEmpty(),
                         selectedBook = it.selectedBook?.takeIf { selected -> selected.id == bookId }
                             ?.copy(isOfflineAvailable = false) ?: it.selectedBook,
+                        books = it.books.map { row ->
+                            if (row.id == bookId) row.copy(isOfflineAvailable = false) else row
+                        },
                         downloadStates = it.downloadStates - bookId
                     )
                 }
@@ -501,6 +936,131 @@ class AppViewModel(
         }
     }
 
+    private fun updateBook(bookId: String, payload: BookUpdateDto, successMessage: String) {
+        val state = uiState.value
+        if (state.isOfflineMode || state.serverUrl.isBlank() || state.accessToken.isBlank()) {
+            _uiState.update { it.copy(bookActionError = "Reconnecte Aurelia avant de modifier ce livre.") }
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    isMutatingBook = true,
+                    bookActionError = null,
+                    bookActionMessage = null
+                )
+            }
+
+            val result = runCatching {
+                libraryRepository.updateBook(state.serverUrl, bookId, payload)
+            }
+            val updated = result.getOrElse { error ->
+                handleApiFailure(error)
+                _uiState.update {
+                    it.copy(
+                        isMutatingBook = false,
+                        bookActionError = error.toFriendlyMessage()
+                    )
+                }
+                return@launch
+            }
+
+            downloadRepository.updateLocalMetadata(updated)
+            _uiState.update {
+                it.copy(
+                    selectedBook = if (it.selectedBook?.id == updated.id) {
+                        updated.withLocalProgress(it.localProgress)
+                    } else {
+                        it.selectedBook
+                    },
+                    books = it.books.replace(updated.toListItem()).withLocalProgress(it.localProgress),
+                    isMutatingBook = false,
+                    bookActionMessage = successMessage
+                )
+            }
+            loadOrganization()
+        }
+    }
+
+    private suspend fun downloadBookDetail(book: BookDetailDto) {
+        setDownloadState(book.id, BookDownloadUiState(status = DownloadStatus.Downloading, progress = 0))
+
+        runCatching {
+            downloadRepository.downloadBook(uiState.value.serverUrl, book) { progress ->
+                setDownloadState(
+                    book.id,
+                    BookDownloadUiState(
+                        status = DownloadStatus.Downloading,
+                        progress = progress
+                    )
+                )
+            }
+        }.onSuccess {
+            _uiState.update {
+                val offlineIds = it.offlineBookIds + book.id
+                it.copy(
+                    offlineBookIds = offlineIds,
+                    offlineBookCount = offlineIds.size,
+                    selectedBook = it.selectedBook?.takeIf { selected -> selected.id == book.id }
+                        ?.copy(isOfflineAvailable = true) ?: it.selectedBook,
+                    books = it.books.map { row ->
+                        if (row.id == book.id) row.copy(isOfflineAvailable = true) else row
+                    },
+                    downloadStates = it.downloadStates + (
+                        book.id to BookDownloadUiState(
+                            status = DownloadStatus.Downloaded,
+                            progress = 100
+                        )
+                    ),
+                    bookActionMessage = "Livre telecharge pour le hors ligne."
+                )
+            }
+        }.onFailure { error ->
+            setDownloadState(
+                book.id,
+                BookDownloadUiState(
+                    status = DownloadStatus.Failed,
+                    error = error.toFriendlyMessage()
+                )
+            )
+            _uiState.update { it.copy(bookActionError = error.toFriendlyMessage()) }
+        }
+    }
+
+    private suspend fun loadBookDetailForAction(bookId: String): BookDetailDto? {
+        val state = uiState.value
+        return if (state.isOfflineMode || state.serverUrl.isBlank()) {
+            downloadRepository.localBookDetail(bookId)
+        } else {
+            runCatching {
+                libraryRepository.getBook(state.serverUrl, bookId)
+            }.getOrElse { error ->
+                if (error !is ApiException) {
+                    downloadRepository.localBookDetail(bookId)
+                } else {
+                    throw error
+                }
+            }
+        }
+    }
+
+    private data class ImportFile(
+        val filename: String,
+        val bytes: ByteArray
+    )
+
+    private suspend fun readImportFile(contentResolver: ContentResolver, uri: Uri): ImportFile =
+        withContext(Dispatchers.IO) {
+            val filename = contentResolver.displayName(uri)
+                ?.takeIf { it.lowercase().endsWith(".epub") }
+                ?: "aurelia-import.epub"
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: throw IOException("Fichier EPUB inaccessible.")
+            require(bytes.isNotEmpty()) { "Fichier EPUB vide." }
+            ImportFile(filename = filename, bytes = bytes)
+        }
+
     private fun restoreSession() {
         viewModelScope.launch {
             val storedSession = authRepository.loadSession()
@@ -535,6 +1095,7 @@ class AppViewModel(
                 refreshLocalProgress()
                 ProgressSyncScheduler.enqueue(appContext)
                 loadBooks(reset = true)
+                loadOrganization()
             }.onFailure { error ->
                 if (error is ApiException && error.statusCode == 401) {
                     authRepository.clearToken()
@@ -745,6 +1306,16 @@ class AppViewModel(
         }
     }
 
+    private fun finishedProgressPayload(): String {
+        return JSONObject()
+            .put("progress_percent", 100f)
+            .put("chapter_label", "Termine")
+            .put("location_json", JSONObject())
+            .put("client_updated_at", Instant.now().toString())
+            .put("device_id", "android-reader")
+            .toString()
+    }
+
     private fun handleApiFailure(error: Throwable) {
         if (error is ApiException && error.statusCode == 401) {
             viewModelScope.launch {
@@ -819,6 +1390,26 @@ private fun List<BookListItemDto>.withLocalProgress(
     }
 }
 
+private fun List<BookListItemDto>.replace(book: BookListItemDto): List<BookListItemDto> {
+    return map { current -> if (current.id == book.id) book else current }
+}
+
+private fun BookDetailDto.toListItem(): BookListItemDto {
+    return BookListItemDto(
+        id = id,
+        title = title,
+        authors = authors,
+        coverUrl = coverUrl,
+        status = status,
+        rating = rating,
+        favorite = favorite,
+        progressPercent = progressPercent,
+        isOfflineAvailable = isOfflineAvailable,
+        addedAt = addedAt,
+        lastOpenedAt = lastOpenedAt
+    )
+}
+
 private fun List<BookListItemDto>.matchingOfflineQuery(query: String): List<BookListItemDto> {
     val cleanQuery = query.trim()
     if (cleanQuery.isBlank()) {
@@ -834,4 +1425,15 @@ private fun BookDetailDto.withLocalProgress(
     progress: Map<String, BookProgressSnapshot>
 ): BookDetailDto {
     return progress[id]?.let { copy(progressPercent = it.progressPercent) } ?: this
+}
+
+private fun ContentResolver.displayName(uri: Uri): String? {
+    return query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+        val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+        if (index >= 0 && cursor.moveToFirst()) {
+            cursor.getString(index)
+        } else {
+            null
+        }
+    }
 }

@@ -5,6 +5,7 @@ import java.io.IOException
 import java.net.URI
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MultipartBody
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -116,6 +117,72 @@ class AureliaApi(
                 .get()
                 .build()
         ).toBookDetail()
+    }
+
+    suspend fun updateBook(bookId: String, payload: BookUpdateDto): BookDetailDto = withContext(Dispatchers.IO) {
+        val body = payload.toJson()
+            .toString()
+            .toRequestBody(jsonMediaType)
+
+        executeJson(
+            Request.Builder()
+                .url(url("books/$bookId"))
+                .patch(body)
+                .build()
+        ).toBookDetail()
+    }
+
+    suspend fun uploadBook(filename: String, bytes: ByteArray): UploadBookResponseDto =
+        withContext(Dispatchers.IO) {
+            val fileBody = bytes.toRequestBody("application/epub+zip".toMediaType())
+            val body = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("file", filename, fileBody)
+                .build()
+
+            executeJson(
+                Request.Builder()
+                    .url(url("books/upload"))
+                    .post(body)
+                    .build()
+            ).toUploadBookResponse()
+        }
+
+    suspend fun listCollections(): CollectionListResponseDto = withContext(Dispatchers.IO) {
+        val json = executeJson(
+            Request.Builder()
+                .url(url("organization/collections"))
+                .get()
+                .build()
+        )
+
+        CollectionListResponseDto(
+            items = json.optJSONArray("items").toCollectionSummaries(),
+            total = json.optInt("total")
+        )
+    }
+
+    suspend fun listSeries(): SeriesListResponseDto = withContext(Dispatchers.IO) {
+        val json = executeJson(
+            Request.Builder()
+                .url(url("organization/series"))
+                .get()
+                .build()
+        )
+
+        SeriesListResponseDto(
+            items = json.optJSONArray("items").toSeriesSummaries(),
+            total = json.optInt("total")
+        )
+    }
+
+    suspend fun seriesDetail(seriesId: String): SeriesDetailDto = withContext(Dispatchers.IO) {
+        executeJson(
+            Request.Builder()
+                .url(url("organization/series/$seriesId"))
+                .get()
+                .build()
+        ).toSeriesDetail()
     }
 
     suspend fun downloadBookFile(
@@ -397,6 +464,81 @@ class AureliaApi(
             isOfflineAvailable = optBoolean("is_offline_available"),
             addedAt = optString("added_at"),
             lastOpenedAt = optNullableString("last_opened_at")
+        )
+    }
+
+    private fun BookUpdateDto.toJson(): JSONObject {
+        return JSONObject().apply {
+            title?.let { put("title", it) }
+            authors?.let { put("authors", JSONArray(it)) }
+            seriesName?.let { put("series_name", it) }
+            seriesIndex?.let { put("series_index", it) }
+            tags?.let { put("tags", JSONArray(it)) }
+            status?.let { put("status", it) }
+            rating?.let { put("rating", it) }
+            favorite?.let { put("favorite", it) }
+        }
+    }
+
+    private fun JSONObject.toUploadBookResponse(): UploadBookResponseDto {
+        return UploadBookResponseDto(
+            jobId = optString("job_id"),
+            bookId = optNullableString("book_id"),
+            status = optString("status"),
+            warning = optNullableString("warning")
+        )
+    }
+
+    private fun JSONArray?.toCollectionSummaries(): List<CollectionSummaryDto> {
+        if (this == null) {
+            return emptyList()
+        }
+        return buildList {
+            for (index in 0 until length()) {
+                optJSONObject(index)?.let { json ->
+                    add(
+                        CollectionSummaryDto(
+                            id = json.optString("id"),
+                            name = json.optString("name"),
+                            description = json.optNullableString("description"),
+                            bookCount = json.optInt("book_count"),
+                            coverUrl = absoluteUrl(json.optNullableString("cover_url"))
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private fun JSONArray?.toSeriesSummaries(): List<SeriesSummaryDto> {
+        if (this == null) {
+            return emptyList()
+        }
+        return buildList {
+            for (index in 0 until length()) {
+                optJSONObject(index)?.let { json ->
+                    add(
+                        SeriesSummaryDto(
+                            id = json.optString("id"),
+                            name = json.optString("name"),
+                            description = json.optNullableString("description"),
+                            bookCount = json.optInt("book_count"),
+                            coverUrl = absoluteUrl(json.optNullableString("cover_url"))
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private fun JSONObject.toSeriesDetail(): SeriesDetailDto {
+        return SeriesDetailDto(
+            id = optString("id"),
+            name = optString("name"),
+            description = optNullableString("description"),
+            bookCount = optInt("book_count"),
+            coverUrl = absoluteUrl(optNullableString("cover_url")),
+            books = optJSONArray("books").toBookListItems()
         )
     }
 

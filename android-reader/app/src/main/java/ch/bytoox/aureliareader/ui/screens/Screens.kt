@@ -1,5 +1,8 @@
 package ch.bytoox.aureliareader.ui.screens
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -29,8 +32,6 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -38,21 +39,32 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ArrowForward
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Favorite
+import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Upload
 import androidx.compose.material.icons.outlined.Wifi
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -79,6 +91,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import ch.bytoox.aureliareader.core.network.BookDetailDto
 import ch.bytoox.aureliareader.core.network.BookListItemDto
+import ch.bytoox.aureliareader.core.network.CollectionSummaryDto
+import ch.bytoox.aureliareader.core.network.SeriesDetailDto
+import ch.bytoox.aureliareader.core.network.SeriesSummaryDto
 import ch.bytoox.aureliareader.ui.app.BookDownloadUiState
 import ch.bytoox.aureliareader.ui.app.DownloadStatus
 import coil.compose.AsyncImage
@@ -225,6 +240,7 @@ fun LoginScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun HomeScreen(
     displayName: String?,
@@ -235,12 +251,27 @@ fun HomeScreen(
     offlineBookIds: Set<String>,
     isOfflineMode: Boolean,
     isLoading: Boolean,
+    isReconnecting: Boolean,
+    isMutatingBook: Boolean,
     error: String?,
+    actionMessage: String?,
+    actionError: String?,
     onRefresh: () -> Unit,
+    onReconnect: () -> Unit,
     onOpenLibrary: () -> Unit,
-    onOpenBook: (BookListItemDto) -> Unit
+    onOpenBook: (BookListItemDto) -> Unit,
+    onReadBook: (BookListItemDto) -> Unit,
+    onDownloadBook: (BookListItemDto) -> Unit,
+    onRemoveDownload: (BookListItemDto) -> Unit,
+    onMarkFinished: (BookListItemDto) -> Unit,
+    onToggleFavorite: (BookListItemDto) -> Unit,
+    onRenameBook: (BookListItemDto, String) -> Unit
 ) {
     val currentBook = books.firstOrNull()
+    var actionBookId by rememberSaveable { mutableStateOf<String?>(null) }
+    var renameBookId by rememberSaveable { mutableStateOf<String?>(null) }
+    val actionBook = actionBookId?.let { id -> books.firstOrNull { it.id == id } }
+    val renameBook = renameBookId?.let { id -> books.firstOrNull { it.id == id } }
 
     AureliaScreen {
         HeaderBlock(
@@ -265,7 +296,7 @@ fun HomeScreen(
                 modifier = Modifier.fillMaxWidth()
             )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(onClick = { currentBook?.let(onOpenBook) }, enabled = currentBook != null) {
                 Icon(Icons.Outlined.PlayArrow, contentDescription = null)
                 Text("Fiche")
@@ -273,9 +304,19 @@ fun HomeScreen(
             OutlinedButton(onClick = onOpenLibrary) {
                 Text("Bibliotheque")
             }
+            OutlinedButton(onClick = onReconnect, enabled = !isReconnecting) {
+                if (isReconnecting) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Outlined.Refresh, contentDescription = null)
+                }
+                Text("Reconnecter")
+            }
         }
         StatusPill(label = if (isOfflineMode) "$total livre(s) hors ligne" else "$total livre(s) serveur")
+        actionMessage?.let { StatusPill(label = it) }
         error?.let { ErrorText(message = it) }
+        actionError?.let { ErrorText(message = it) }
         if (isLoading) {
             LoadingRow("Chargement des livres")
         } else if (books.isEmpty()) {
@@ -287,7 +328,13 @@ fun HomeScreen(
                     "Importe un EPUB depuis Aurelia Web, puis recharge la bibliotheque Android."
                 }
             )
-            OutlinedButton(onClick = onRefresh, enabled = !isOfflineMode) {
+            OutlinedButton(onClick = onReconnect, enabled = !isReconnecting) {
+                if (isReconnecting) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                }
+                Text("Reconnecter au serveur")
+            }
+            OutlinedButton(onClick = onRefresh, enabled = !isOfflineMode && !isLoading) {
                 Text("Recharger")
             }
         } else {
@@ -297,11 +344,52 @@ fun HomeScreen(
                     book = book,
                     accessToken = accessToken,
                     isDownloaded = book.isOfflineAvailable || book.id in offlineBookIds,
-                    onClick = { onOpenBook(book) }
+                    onClick = { onOpenBook(book) },
+                    onAction = { actionBookId = book.id }
                 )
             }
         }
     }
+    BookActionSheet(
+        book = actionBook,
+        isDownloaded = actionBook?.let { it.isOfflineAvailable || it.id in offlineBookIds } == true,
+        isOfflineMode = isOfflineMode,
+        isBusy = isMutatingBook,
+        onDismiss = { actionBookId = null },
+        onRead = {
+            actionBookId = null
+            onReadBook(it)
+        },
+        onDownload = {
+            actionBookId = null
+            onDownloadBook(it)
+        },
+        onRemoveDownload = {
+            actionBookId = null
+            onRemoveDownload(it)
+        },
+        onMarkFinished = {
+            actionBookId = null
+            onMarkFinished(it)
+        },
+        onToggleFavorite = {
+            actionBookId = null
+            onToggleFavorite(it)
+        },
+        onRename = {
+            renameBookId = it.id
+            actionBookId = null
+        }
+    )
+    RenameBookDialog(
+        book = renameBook,
+        isBusy = isMutatingBook,
+        onDismiss = { renameBookId = null },
+        onConfirm = { book, title ->
+            renameBookId = null
+            onRenameBook(book, title)
+        }
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -315,13 +403,28 @@ fun LibraryScreen(
     isOfflineMode: Boolean,
     isLoading: Boolean,
     isLoadingMore: Boolean,
+    isReconnecting: Boolean,
+    isMutatingBook: Boolean,
     error: String?,
+    actionMessage: String?,
+    actionError: String?,
     onSearch: (String) -> Unit,
     onRefresh: () -> Unit,
+    onReconnect: () -> Unit,
     onLoadMore: () -> Unit,
-    onOpenBook: (BookListItemDto) -> Unit
+    onOpenBook: (BookListItemDto) -> Unit,
+    onReadBook: (BookListItemDto) -> Unit,
+    onDownloadBook: (BookListItemDto) -> Unit,
+    onRemoveDownload: (BookListItemDto) -> Unit,
+    onMarkFinished: (BookListItemDto) -> Unit,
+    onToggleFavorite: (BookListItemDto) -> Unit,
+    onRenameBook: (BookListItemDto, String) -> Unit
 ) {
     var localSearchQuery by rememberSaveable { mutableStateOf(searchQuery) }
+    var actionBookId by rememberSaveable { mutableStateOf<String?>(null) }
+    var renameBookId by rememberSaveable { mutableStateOf<String?>(null) }
+    val actionBook = actionBookId?.let { id -> books.firstOrNull { it.id == id } }
+    val renameBook = renameBookId?.let { id -> books.firstOrNull { it.id == id } }
 
     LaunchedEffect(searchQuery) {
         if (searchQuery != localSearchQuery) {
@@ -359,9 +462,17 @@ fun LibraryScreen(
         if (isLoading && books.isNotEmpty()) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(onClick = onRefresh, enabled = !isLoading && !isOfflineMode) {
                 Text(if (isOfflineMode) "Hors ligne" else "Recharger")
+            }
+            OutlinedButton(onClick = onReconnect, enabled = !isReconnecting) {
+                if (isReconnecting) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Outlined.Refresh, contentDescription = null)
+                }
+                Text("Reconnecter")
             }
             if (localSearchQuery.isNotBlank()) {
                 TextButton(onClick = { localSearchQuery = "" }) {
@@ -369,7 +480,9 @@ fun LibraryScreen(
                 }
             }
         }
+        actionMessage?.let { StatusPill(label = it) }
         error?.let { ErrorText(message = it) }
+        actionError?.let { ErrorText(message = it) }
         if (isLoading && books.isEmpty()) {
             LoadingRow("Chargement bibliotheque")
         } else if (books.isEmpty()) {
@@ -387,7 +500,8 @@ fun LibraryScreen(
                     book = book,
                     accessToken = accessToken,
                     isDownloaded = book.isOfflineAvailable || book.id in offlineBookIds,
-                    onClick = { onOpenBook(book) }
+                    onClick = { onOpenBook(book) },
+                    onAction = { actionBookId = book.id }
                 )
             }
             if (!isOfflineMode && books.size < total) {
@@ -405,9 +519,49 @@ fun LibraryScreen(
             }
         }
     }
+    BookActionSheet(
+        book = actionBook,
+        isDownloaded = actionBook?.let { it.isOfflineAvailable || it.id in offlineBookIds } == true,
+        isOfflineMode = isOfflineMode,
+        isBusy = isMutatingBook,
+        onDismiss = { actionBookId = null },
+        onRead = {
+            actionBookId = null
+            onReadBook(it)
+        },
+        onDownload = {
+            actionBookId = null
+            onDownloadBook(it)
+        },
+        onRemoveDownload = {
+            actionBookId = null
+            onRemoveDownload(it)
+        },
+        onMarkFinished = {
+            actionBookId = null
+            onMarkFinished(it)
+        },
+        onToggleFavorite = {
+            actionBookId = null
+            onToggleFavorite(it)
+        },
+        onRename = {
+            renameBookId = it.id
+            actionBookId = null
+        }
+    )
+    RenameBookDialog(
+        book = renameBook,
+        isBusy = isMutatingBook,
+        onDismiss = { renameBookId = null },
+        onConfirm = { book, title ->
+            renameBookId = null
+            onRenameBook(book, title)
+        }
+    )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun BookDetailScreen(
     book: BookDetailDto?,
@@ -420,16 +574,22 @@ fun BookDetailScreen(
     readerPrepareProgress: Int?,
     readerError: String?,
     isOfflineMode: Boolean,
+    isMutatingBook: Boolean,
     isLoading: Boolean,
     error: String?,
+    actionMessage: String?,
+    actionError: String?,
     onRead: () -> Unit,
     onDownload: () -> Unit,
     onRemoveDownload: () -> Unit,
+    onMarkFinished: () -> Unit,
+    onUpdateBook: (String, String, String, Boolean) -> Unit,
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onOpenRelatedBook: (BookListItemDto) -> Unit
 ) {
     val detailListState = rememberLazyListState()
+    var showEditDialog by rememberSaveable(book?.id) { mutableStateOf(false) }
 
     LaunchedEffect(loadingBookId) {
         if (!loadingBookId.isNullOrBlank()) {
@@ -464,14 +624,12 @@ fun BookDetailScreen(
                         targetState = book,
                         transitionSpec = {
                             (
-                                slideInHorizontally(animationSpec = tween(260)) { width -> width / 3 } +
-                                    fadeIn(animationSpec = tween(180)) +
-                                    scaleIn(animationSpec = tween(220), initialScale = 0.97f)
+                                slideInHorizontally(animationSpec = tween(160)) { width -> width / 8 } +
+                                    fadeIn(animationSpec = tween(140))
                                 ) togetherWith
                                 (
-                                    slideOutHorizontally(animationSpec = tween(180)) { width -> -width / 4 } +
-                                        fadeOut(animationSpec = tween(120)) +
-                                        scaleOut(animationSpec = tween(180), targetScale = 0.98f)
+                                    slideOutHorizontally(animationSpec = tween(120)) { width -> -width / 10 } +
+                                        fadeOut(animationSpec = tween(100))
                                     ) using
                                 SizeTransform(clip = false)
                         },
@@ -506,7 +664,10 @@ fun BookDetailScreen(
                             progressSyncLabel?.takeIf { it.isNotBlank() }?.let { label ->
                                 StatusPill(label = label)
                             }
-                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
                                 Button(
                                     onClick = onRead,
                                     enabled = !isPreparingReader
@@ -531,7 +692,23 @@ fun BookDetailScreen(
                                     onDownload = onDownload,
                                     onRemoveDownload = onRemoveDownload
                                 )
+                                OutlinedButton(
+                                    onClick = { showEditDialog = true },
+                                    enabled = !isOfflineMode && !isMutatingBook
+                                ) {
+                                    Icon(Icons.Outlined.Edit, contentDescription = null)
+                                    Text("Modifier")
+                                }
+                                OutlinedButton(
+                                    onClick = onMarkFinished,
+                                    enabled = !isOfflineMode && !isMutatingBook && visibleBook.status != "finished"
+                                ) {
+                                    Icon(Icons.Outlined.CheckCircle, contentDescription = null)
+                                    Text("Marquer lu")
+                                }
                             }
+                            actionMessage?.let { StatusPill(label = it) }
+                            actionError?.let { ErrorText(message = it) }
                             if (isDownloaded) {
                                 StatusPill(label = "Disponible hors ligne")
                             }
@@ -555,6 +732,15 @@ fun BookDetailScreen(
             }
         }
     }
+    EditBookDialog(
+        book = book.takeIf { showEditDialog },
+        isBusy = isMutatingBook,
+        onDismiss = { showEditDialog = false },
+        onConfirm = { title, status, rating, favorite ->
+            showEditDialog = false
+            onUpdateBook(title, status, rating, favorite)
+        }
+    )
 }
 
 @Composable
@@ -562,10 +748,23 @@ fun SettingsScreen(
     serverUrl: String,
     username: String?,
     isOfflineMode: Boolean,
+    offlineBookCount: Int,
+    collectionsCount: Int,
+    seriesCount: Int,
     sessionMessage: String?,
+    importMessage: String?,
+    actionError: String?,
+    isImportingBook: Boolean,
+    isReconnecting: Boolean,
     isLoggingOut: Boolean,
+    onReconnect: () -> Unit,
+    onImportBook: (Uri) -> Unit,
     onLogout: () -> Unit
 ) {
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(onImportBook)
+    }
+
     AureliaScreen {
         HeaderBlock(
             eyebrow = "Parametres",
@@ -578,15 +777,215 @@ fun SettingsScreen(
         )
         SettingsRow("Serveur", if (isOfflineMode) "Hors ligne" else serverUrl.ifBlank { "Non configure" })
         SettingsRow("Compte", username ?: if (isOfflineMode) "Session locale" else "Non connecte")
+        SettingsRow("Cache offline", "$offlineBookCount livre(s)")
+        SettingsRow("Sync", if (isOfflineMode) "En attente de reconnexion" else "Disponible")
+        SettingsRow("Organisation", "$collectionsCount collection(s), $seriesCount serie(s)")
         SettingsRow("Theme app", "Noir et or")
-        SettingsRow("Version", "0.1.1")
+        SettingsRow("Reglages lecteur", "Dans le lecteur EPUB")
+        SettingsRow("Version", "0.1.2")
         sessionMessage?.let { StatusPill(label = it) }
+        importMessage?.let { StatusPill(label = it) }
+        actionError?.let { ErrorText(message = it) }
+        OutlinedButton(onClick = onReconnect, enabled = !isReconnecting, modifier = Modifier.fillMaxWidth()) {
+            if (isReconnecting) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            } else {
+                Icon(Icons.Outlined.Refresh, contentDescription = null)
+            }
+            Text("Reconnecter au serveur")
+        }
+        OutlinedButton(
+            onClick = {
+                importLauncher.launch(
+                    arrayOf(
+                        "application/epub+zip",
+                        "application/octet-stream",
+                        "application/zip"
+                    )
+                )
+            },
+            enabled = !isOfflineMode && !isImportingBook,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            if (isImportingBook) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            } else {
+                Icon(Icons.Outlined.Upload, contentDescription = null)
+            }
+            Text("Importer un EPUB")
+        }
         OutlinedButton(onClick = onLogout, enabled = !isLoggingOut, modifier = Modifier.fillMaxWidth()) {
             if (isLoggingOut) {
                 CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
             } else {
                 Text("Se deconnecter")
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun OrganizationScreen(
+    collections: List<CollectionSummaryDto>,
+    series: List<SeriesSummaryDto>,
+    selectedSeries: SeriesDetailDto?,
+    isLoadingSeriesDetail: Boolean,
+    seriesDetailError: String?,
+    accessToken: String,
+    isOfflineMode: Boolean,
+    isLoading: Boolean,
+    error: String?,
+    onRefresh: () -> Unit,
+    onOpenSeries: (SeriesSummaryDto) -> Unit,
+    onDismissSeries: () -> Unit,
+    onOpenBook: (BookListItemDto) -> Unit
+) {
+    AureliaScreen {
+        HeaderBlock(
+            eyebrow = "Organisation",
+            title = "Collections et series",
+            subtitle = if (isOfflineMode) {
+                "Reconnecte le serveur pour mettre a jour l'organisation."
+            } else {
+                "${collections.size} collection(s), ${series.size} serie(s)."
+            }
+        )
+        OutlinedButton(onClick = onRefresh, enabled = !isOfflineMode && !isLoading) {
+            if (isLoading) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            } else {
+                Icon(Icons.Outlined.Refresh, contentDescription = null)
+            }
+            Text("Recharger")
+        }
+        error?.let { ErrorText(message = it) }
+        if (isLoading) {
+            LoadingRow("Chargement organisation")
+        }
+        SectionTitle("Collections")
+        if (collections.isEmpty() && !isLoading) {
+            EmptyState("Aucune collection", "Les collections serveur apparaitront ici apres synchronisation.")
+        } else {
+            collections.forEach { collection ->
+                OrganizationRow(
+                    title = collection.name,
+                    subtitle = collection.description ?: "${collection.bookCount} livre(s)",
+                    coverUrl = collection.coverUrl,
+                    accessToken = accessToken,
+                    onClick = null
+                )
+            }
+        }
+        SectionTitle("Series")
+        if (series.isEmpty() && !isLoading) {
+            EmptyState("Aucune serie", "Les series serveur apparaitront ici apres synchronisation.")
+        } else {
+            series.forEach { seriesItem ->
+                OrganizationRow(
+                    title = seriesItem.name,
+                    subtitle = seriesItem.description ?: "${seriesItem.bookCount} livre(s)",
+                    coverUrl = seriesItem.coverUrl,
+                    accessToken = accessToken,
+                    onClick = { onOpenSeries(seriesItem) }
+                )
+            }
+        }
+    }
+    if (isLoadingSeriesDetail || selectedSeries != null || seriesDetailError != null) {
+        ModalBottomSheet(onDismissRequest = onDismissSeries) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                when {
+                    isLoadingSeriesDetail -> LoadingRow("Ouverture de la serie")
+                    seriesDetailError != null -> {
+                        ErrorText(message = seriesDetailError)
+                        OutlinedButton(onClick = onDismissSeries) {
+                            Text("Fermer")
+                        }
+                    }
+                    selectedSeries != null -> {
+                        HeaderBlock(
+                            eyebrow = "Serie",
+                            title = selectedSeries.name,
+                            subtitle = "${selectedSeries.bookCount} livre(s)"
+                        )
+                        selectedSeries.description?.let {
+                            Text(text = it, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        selectedSeries.books.forEach { book ->
+                            BookRow(
+                                book = book,
+                                accessToken = accessToken,
+                                isDownloaded = book.isOfflineAvailable,
+                                onClick = {
+                                    onDismissSeries()
+                                    onOpenBook(book)
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OrganizationRow(
+    title: String,
+    subtitle: String,
+    coverUrl: String?,
+    accessToken: String,
+    onClick: (() -> Unit)? = null
+) {
+    val content: @Composable () -> Unit = {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            BookCover(
+                coverUrl = coverUrl,
+                title = title,
+                accessToken = accessToken,
+                modifier = Modifier
+                    .size(48.dp)
+                    .aspectRatio(2f / 3f)
+                    .clip(RoundedCornerShape(4.dp))
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (onClick != null) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = "Ouvrir")
+            }
+        }
+    }
+
+    if (onClick != null) {
+        Card(
+            onClick = onClick,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            content()
+        }
+    } else {
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            content()
         }
     }
 }
@@ -650,7 +1049,8 @@ private fun BookRow(book: BookListItemDto, accessToken: String, onClick: () -> U
         book = book,
         accessToken = accessToken,
         isDownloaded = book.isOfflineAvailable,
-        onClick = onClick
+        onClick = onClick,
+        onAction = null
     )
 }
 
@@ -660,7 +1060,8 @@ private fun BookRow(
     book: BookListItemDto,
     accessToken: String,
     isDownloaded: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onAction: (() -> Unit)? = null
 ) {
     Card(
         onClick = onClick,
@@ -698,6 +1099,229 @@ private fun BookRow(
             if (isDownloaded) {
                 Icon(Icons.Outlined.CloudDone, contentDescription = "Telecharge")
             }
+            if (onAction != null) {
+                IconButton(onClick = onAction) {
+                    Icon(Icons.Outlined.MoreVert, contentDescription = "Actions livre")
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BookActionSheet(
+    book: BookListItemDto?,
+    isDownloaded: Boolean,
+    isOfflineMode: Boolean,
+    isBusy: Boolean,
+    onDismiss: () -> Unit,
+    onRead: (BookListItemDto) -> Unit,
+    onDownload: (BookListItemDto) -> Unit,
+    onRemoveDownload: (BookListItemDto) -> Unit,
+    onMarkFinished: (BookListItemDto) -> Unit,
+    onToggleFavorite: (BookListItemDto) -> Unit,
+    onRename: (BookListItemDto) -> Unit
+) {
+    val visibleBook = book ?: return
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(visibleBook.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(visibleBook.authorLine, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            SheetAction(
+                label = "Lire",
+                enabled = true,
+                icon = { Icon(Icons.Outlined.PlayArrow, contentDescription = null) },
+                onClick = { onRead(visibleBook) }
+            )
+            SheetAction(
+                label = "Modifier le titre",
+                enabled = !isOfflineMode && !isBusy,
+                icon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
+                onClick = { onRename(visibleBook) }
+            )
+            SheetAction(
+                label = if (visibleBook.favorite) "Retirer des favoris" else "Ajouter aux favoris",
+                enabled = !isOfflineMode && !isBusy,
+                icon = {
+                    Icon(
+                        if (visibleBook.favorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
+                        contentDescription = null
+                    )
+                },
+                onClick = { onToggleFavorite(visibleBook) }
+            )
+            SheetAction(
+                label = "Marquer lu",
+                enabled = !isOfflineMode && !isBusy && visibleBook.status != "finished",
+                icon = { Icon(Icons.Outlined.CheckCircle, contentDescription = null) },
+                onClick = { onMarkFinished(visibleBook) }
+            )
+            SheetAction(
+                label = if (isDownloaded) "Supprimer hors ligne" else "Telecharger hors ligne",
+                enabled = !isBusy && (isDownloaded || !isOfflineMode),
+                icon = {
+                    Icon(
+                        if (isDownloaded) Icons.Outlined.Delete else Icons.Outlined.Download,
+                        contentDescription = null
+                    )
+                },
+                onClick = {
+                    if (isDownloaded) {
+                        onRemoveDownload(visibleBook)
+                    } else {
+                        onDownload(visibleBook)
+                    }
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun SheetAction(
+    label: String,
+    enabled: Boolean,
+    icon: @Composable () -> Unit,
+    onClick: () -> Unit
+) {
+    TextButton(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            icon()
+            Text(label)
+        }
+    }
+}
+
+@Composable
+private fun RenameBookDialog(
+    book: BookListItemDto?,
+    isBusy: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (BookListItemDto, String) -> Unit
+) {
+    val visibleBook = book ?: return
+    var title by rememberSaveable(visibleBook.id) { mutableStateOf(visibleBook.title) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Modifier le titre") },
+        text = {
+            OutlinedTextField(
+                value = title,
+                onValueChange = { title = it },
+                label = { Text("Titre") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(visibleBook, title.trim()) },
+                enabled = !isBusy && title.isNotBlank()
+            ) {
+                Text("Enregistrer")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Annuler")
+            }
+        }
+    )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun EditBookDialog(
+    book: BookDetailDto?,
+    isBusy: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (String, String, String, Boolean) -> Unit
+) {
+    val visibleBook = book ?: return
+    var title by rememberSaveable(visibleBook.id, "title") { mutableStateOf(visibleBook.title) }
+    var status by rememberSaveable(visibleBook.id, "status") { mutableStateOf(visibleBook.status) }
+    var rating by rememberSaveable(visibleBook.id, "rating") { mutableStateOf(visibleBook.rating?.toString().orEmpty()) }
+    var favorite by rememberSaveable(visibleBook.id, "favorite") { mutableStateOf(visibleBook.favorite) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Modifier le livre") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("Titre") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                StatusChoiceRow(value = status, onChange = { status = it })
+                OutlinedTextField(
+                    value = rating,
+                    onValueChange = { rating = it.filter(Char::isDigit).take(1) },
+                    label = { Text("Note 0-5") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Number,
+                        imeAction = ImeAction.Done
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = favorite, onCheckedChange = { favorite = it })
+                    Text("Favori")
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(title.trim(), status, rating.trim(), favorite) },
+                enabled = !isBusy && title.isNotBlank()
+            ) {
+                Text("Enregistrer")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Annuler")
+            }
+        }
+    )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun StatusChoiceRow(value: String, onChange: (String) -> Unit) {
+    val choices = listOf(
+        "unread" to "Non lu",
+        "in_progress" to "En cours",
+        "finished" to "Lu",
+        "abandoned" to "Abandonne"
+    )
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Statut", fontWeight = FontWeight.Bold)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            choices.forEach { (status, label) ->
+                OutlinedButton(onClick = { onChange(status) }) {
+                    if (value == status) {
+                        Icon(Icons.Outlined.CheckCircle, contentDescription = null)
+                    }
+                    Text(label)
+                }
+            }
         }
     }
 }
@@ -720,14 +1344,12 @@ private fun DownloadActionButton(
         targetState = mode,
         transitionSpec = {
             (
-                slideInVertically(animationSpec = tween(180)) { height -> height / 2 } +
-                    fadeIn(animationSpec = tween(140)) +
-                    scaleIn(animationSpec = tween(180), initialScale = 0.92f)
+                slideInVertically(animationSpec = tween(140)) { height -> height / 4 } +
+                    fadeIn(animationSpec = tween(120))
                 ) togetherWith
                 (
-                    slideOutVertically(animationSpec = tween(120)) { height -> -height / 2 } +
-                        fadeOut(animationSpec = tween(100)) +
-                        scaleOut(animationSpec = tween(120), targetScale = 0.94f)
+                    slideOutVertically(animationSpec = tween(100)) { height -> -height / 5 } +
+                        fadeOut(animationSpec = tween(90))
                     ) using SizeTransform(clip = false)
         },
         label = "download-action-button"

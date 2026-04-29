@@ -103,6 +103,18 @@ class DownloadRepository(
         downloadDao.delete(bookId)
     }
 
+    suspend fun updateLocalMetadata(book: BookDetailDto) {
+        val entity = bookDao.bookById(book.id) ?: return
+        val localPath = entity.localFilePath ?: return
+        bookDao.upsert(
+            book.toEntity(
+                localFilePath = localPath,
+                localCoverPath = entity.localCoverPath,
+                downloadedSize = entity.fileSize ?: 0L
+            )
+        )
+    }
+
     suspend fun prepareBookForReading(
         serverUrl: String,
         book: BookDetailDto,
