@@ -3,11 +3,14 @@ package ch.bytoox.aureliareader.data.repositories
 import ch.bytoox.aureliareader.core.files.BookFileStore
 import ch.bytoox.aureliareader.core.network.ApiClient
 import ch.bytoox.aureliareader.core.network.BookDetailDto
+import ch.bytoox.aureliareader.core.network.BookListItemDto
+import ch.bytoox.aureliareader.core.network.BookSeriesDto
 import ch.bytoox.aureliareader.data.local.dao.BookDao
 import ch.bytoox.aureliareader.data.local.dao.DownloadDao
 import ch.bytoox.aureliareader.data.local.entities.BookEntity
 import ch.bytoox.aureliareader.data.local.entities.DownloadEntity
 import java.io.File
+import java.time.Instant
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -25,6 +28,19 @@ class DownloadRepository(
             downloadDao.delete(missingId)
         }
         return existingIds
+    }
+
+    suspend fun downloadedBooks(): List<BookListItemDto> {
+        val existingIds = downloadedBookIds()
+        return bookDao.downloadedBooks()
+            .filter { book -> book.id in existingIds }
+            .map { book -> book.toListItem() }
+    }
+
+    suspend fun localBookDetail(bookId: String): BookDetailDto? {
+        val localPath = localFilePath(bookId) ?: return null
+        val entity = bookDao.bookById(bookId)?.takeIf { it.localFilePath == localPath } ?: return null
+        return entity.toDetail()
     }
 
     suspend fun downloadBook(
@@ -103,6 +119,9 @@ class DownloadRepository(
             return tempFile.absolutePath
         }
 
+        require(serverUrl.isNotBlank()) {
+            "EPUB non telecharge. Reconnecte le serveur ou telecharge le livre hors ligne."
+        }
         onProgress(0)
         apiClient.create(serverUrl).downloadBookFile(book.id, tempFile, onProgress)
         return tempFile.absolutePath
@@ -135,6 +154,11 @@ class DownloadRepository(
             .put("publishedDate", publishedDate)
             .put("originalFilename", originalFilename)
             .put("metadataSource", metadataSource)
+            .put("status", status)
+            .put("rating", rating)
+            .put("favorite", favorite)
+            .put("addedAt", addedAt)
+            .put("series", series?.toJson())
             .put("subjects", JSONArray(subjects))
             .put("contributors", JSONArray(contributors))
             .put("characters", JSONArray(characters))
@@ -157,4 +181,109 @@ class DownloadRepository(
     }
 
     private fun now(): Long = System.currentTimeMillis()
+
+    private fun BookEntity.toListItem(): BookListItemDto {
+        val metadata = metadata()
+        return BookListItemDto(
+            id = id,
+            title = title,
+            authors = authors(),
+            coverUrl = localCoverPath?.takeIf { File(it).exists() } ?: coverUrl,
+            status = metadata.optCleanString("status") ?: "unread",
+            rating = metadata.optNullableInt("rating"),
+            favorite = metadata.optBoolean("favorite", false),
+            progressPercent = progressPercent,
+            isOfflineAvailable = true,
+            addedAt = metadata.optCleanString("addedAt") ?: updatedAt.toIsoString(),
+            lastOpenedAt = lastOpenedAt
+        )
+    }
+
+    private fun BookEntity.toDetail(): BookDetailDto {
+        val metadata = metadata()
+        return BookDetailDto(
+            id = id,
+            title = title,
+            authors = authors(),
+            coverUrl = localCoverPath?.takeIf { File(it).exists() } ?: coverUrl,
+            status = metadata.optCleanString("status") ?: "unread",
+            rating = metadata.optNullableInt("rating"),
+            favorite = metadata.optBoolean("favorite", false),
+            progressPercent = progressPercent,
+            isOfflineAvailable = true,
+            addedAt = metadata.optCleanString("addedAt") ?: updatedAt.toIsoString(),
+            lastOpenedAt = lastOpenedAt,
+            subtitle = metadata.optCleanString("subtitle"),
+            description = metadata.optCleanString("description"),
+            language = metadata.optCleanString("language"),
+            isbn = metadata.optCleanString("isbn"),
+            publisher = metadata.optCleanString("publisher"),
+            publishedDate = metadata.optCleanString("publishedDate"),
+            originalFilename = metadata.optCleanString("originalFilename"),
+            fileSize = fileSize,
+            metadataSource = metadata.optCleanString("metadataSource"),
+            series = metadata.optJSONObject("series")?.toSeries(),
+            relatedBooks = emptyList(),
+            subjects = metadata.optStringList("subjects"),
+            contributors = metadata.optStringList("contributors"),
+            characters = metadata.optStringList("characters"),
+            tags = metadata.optStringList("tags")
+        )
+    }
+
+    private fun BookEntity.metadata(): JSONObject {
+        return runCatching { JSONObject(metadataJson) }.getOrDefault(JSONObject())
+    }
+
+    private fun BookEntity.authors(): List<String> {
+        return runCatching { JSONArray(authorsJson).toStringList() }.getOrDefault(emptyList())
+    }
+
+    private fun BookSeriesDto.toJson(): JSONObject {
+        return JSONObject()
+            .put("name", name)
+            .put("index", index)
+            .put("source", source)
+    }
+
+    private fun JSONObject.toSeries(): BookSeriesDto? {
+        val name = optCleanString("name") ?: return null
+        return BookSeriesDto(
+            name = name,
+            index = optNullableFloat("index"),
+            source = optCleanString("source") ?: "local"
+        )
+    }
+
+    private fun JSONObject.optCleanString(key: String): String? {
+        if (!has(key) || isNull(key)) {
+            return null
+        }
+        return optString(key).takeIf { it.isNotBlank() }
+    }
+
+    private fun JSONObject.optNullableInt(key: String): Int? {
+        if (!has(key) || isNull(key)) {
+            return null
+        }
+        return optInt(key)
+    }
+
+    private fun JSONObject.optNullableFloat(key: String): Float? {
+        if (!has(key) || isNull(key)) {
+            return null
+        }
+        return optDouble(key).toFloat()
+    }
+
+    private fun JSONObject.optStringList(key: String): List<String> {
+        return optJSONArray(key)?.toStringList().orEmpty()
+    }
+
+    private fun JSONArray.toStringList(): List<String> {
+        return (0 until length())
+            .mapNotNull { index -> optString(index).takeIf { it.isNotBlank() } }
+    }
+
+    private fun Long.toIsoString(): String = Instant.ofEpochMilli(this).toString()
 }

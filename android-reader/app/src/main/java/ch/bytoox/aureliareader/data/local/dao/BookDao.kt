@@ -11,6 +11,9 @@ interface BookDao {
     @Query("SELECT id FROM books WHERE isDownloaded = 1 AND localFilePath IS NOT NULL")
     suspend fun downloadedBookIds(): List<String>
 
+    @Query("SELECT * FROM books WHERE isDownloaded = 1 AND localFilePath IS NOT NULL ORDER BY updatedAt DESC")
+    suspend fun downloadedBooks(): List<BookEntity>
+
     @Query("SELECT * FROM books WHERE id = :bookId LIMIT 1")
     suspend fun bookById(bookId: String): BookEntity?
 

@@ -53,6 +53,8 @@ data class AppUiState(
     val serverUrl: String = "",
     val accessToken: String = "",
     val currentUser: UserDto? = null,
+    val isOfflineMode: Boolean = false,
+    val offlineBookCount: Int = 0,
     val serverStatus: String? = null,
     val serverError: String? = null,
     val loginError: String? = null,
@@ -78,8 +80,11 @@ data class AppUiState(
     val isLoggingIn: Boolean = false,
     val isLoggingOut: Boolean = false
 ) {
+    val canContinueOffline: Boolean
+        get() = offlineBookCount > 0
+
     val isAuthenticated: Boolean
-        get() = currentUser != null
+        get() = currentUser != null || isOfflineMode
 }
 
 class AppViewModel(
@@ -103,6 +108,7 @@ class AppViewModel(
         _uiState.update {
             it.copy(
                 serverUrl = serverUrl,
+                isOfflineMode = false,
                 serverStatus = null,
                 serverError = null,
                 sessionMessage = null
@@ -134,6 +140,7 @@ class AppViewModel(
                     it.copy(
                         serverUrl = serverUrl,
                         serverStatus = "${health.app} repond: ${health.status}",
+                        isOfflineMode = false,
                         isCheckingServer = false
                     )
                 }
@@ -176,6 +183,7 @@ class AppViewModel(
                     it.copy(
                         currentUser = session.user,
                         accessToken = session.accessToken,
+                        isOfflineMode = false,
                         isLoggingIn = false,
                         loginError = null,
                         sessionMessage = "Connecte en Bearer."
@@ -197,14 +205,35 @@ class AppViewModel(
         }
     }
 
+    fun continueOffline(onSuccess: () -> Unit) {
+        viewModelScope.launch {
+            val enteredOffline = enterOfflineMode(
+                message = "Mode hors ligne: livres telecharges uniquement.",
+                query = uiState.value.booksQuery
+            )
+            if (enteredOffline) {
+                onSuccess()
+            } else {
+                _uiState.update {
+                    it.copy(
+                        serverError = "Aucun livre telecharge disponible hors ligne.",
+                        loginError = "Aucun livre telecharge disponible hors ligne."
+                    )
+                }
+            }
+        }
+    }
+
     fun logout(onLoggedOut: () -> Unit) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoggingOut = true, sessionMessage = null) }
             authRepository.logout(uiState.value.serverUrl)
+            val offlineIds = downloadRepository.downloadedBookIds()
             _uiState.update {
                 it.copy(
                     accessToken = "",
                     currentUser = null,
+                    isOfflineMode = false,
                     books = emptyList(),
                     booksTotal = 0,
                     booksQuery = "",
@@ -212,11 +241,12 @@ class AppViewModel(
                     selectedBookId = null,
                     selectedBook = null,
                     selectedBookError = null,
-                        offlineBookIds = emptySet(),
-                        downloadStates = emptyMap(),
-                        localProgress = emptyMap(),
-                        isPreparingReader = false,
-                        readerPrepareProgress = null,
+                    offlineBookIds = offlineIds,
+                    offlineBookCount = offlineIds.size,
+                    downloadStates = emptyMap(),
+                    localProgress = emptyMap(),
+                    isPreparingReader = false,
+                    readerPrepareProgress = null,
                     readerError = null,
                     readerLaunchRequest = null,
                     isLoggingOut = false,
@@ -241,6 +271,9 @@ class AppViewModel(
     }
 
     fun loadMoreBooks() {
+        if (uiState.value.isOfflineMode) {
+            return
+        }
         if (uiState.value.isLoadingMoreBooks || uiState.value.books.size >= uiState.value.booksTotal) {
             return
         }
@@ -248,9 +281,14 @@ class AppViewModel(
     }
 
     fun openBook(bookId: String) {
-        val serverUrl = uiState.value.serverUrl
+        val state = uiState.value
+        val serverUrl = state.serverUrl
+        if (state.isOfflineMode) {
+            openLocalBook(bookId)
+            return
+        }
         if (serverUrl.isBlank()) {
-            _uiState.update { it.copy(selectedBookError = "Serveur non configure.") }
+            openLocalBook(bookId, fallbackError = "Serveur non configure.")
             return
         }
 
@@ -275,11 +313,25 @@ class AppViewModel(
                 }
             }.onFailure { error ->
                 handleApiFailure(error)
-                _uiState.update {
-                    it.copy(
-                        selectedBookError = error.toFriendlyMessage(),
-                        isLoadingBookDetail = false
-                    )
+                val localBook = downloadRepository.localBookDetail(bookId)
+                if (localBook != null && error !is ApiException) {
+                    val progress = loadLocalProgress()
+                    _uiState.update {
+                        it.copy(
+                            isOfflineMode = true,
+                            selectedBook = localBook.withLocalProgress(progress),
+                            selectedBookError = null,
+                            isLoadingBookDetail = false,
+                            sessionMessage = "Serveur indisponible, fiche locale ouverte."
+                        )
+                    }
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            selectedBookError = error.toFriendlyMessage(),
+                            isLoadingBookDetail = false
+                        )
+                    }
                 }
             }
         }
@@ -289,6 +341,16 @@ class AppViewModel(
         val state = uiState.value
         val book = state.selectedBook ?: return
         val serverUrl = state.serverUrl
+        if (state.isOfflineMode) {
+            setDownloadState(
+                book.id,
+                BookDownloadUiState(
+                    status = DownloadStatus.Failed,
+                    error = "Telechargement indisponible en mode hors ligne."
+                )
+            )
+            return
+        }
         if (serverUrl.isBlank()) {
             _uiState.update {
                 it.copy(
@@ -318,8 +380,10 @@ class AppViewModel(
                 }
             }.onSuccess {
                 _uiState.update {
+                    val offlineIds = it.offlineBookIds + book.id
                     it.copy(
-                        offlineBookIds = it.offlineBookIds + book.id,
+                        offlineBookIds = offlineIds,
+                        offlineBookCount = offlineIds.size,
                         selectedBook = it.selectedBook?.takeIf { selected -> selected.id == book.id }
                             ?.copy(isOfflineAvailable = true) ?: it.selectedBook,
                         downloadStates = it.downloadStates + (
@@ -349,9 +413,12 @@ class AppViewModel(
             runCatching {
                 downloadRepository.removeDownload(bookId)
             }.onSuccess {
+                val offlineIds = downloadRepository.downloadedBookIds()
                 _uiState.update {
                     it.copy(
-                        offlineBookIds = it.offlineBookIds - bookId,
+                        offlineBookIds = offlineIds,
+                        offlineBookCount = offlineIds.size,
+                        isOfflineMode = it.isOfflineMode && offlineIds.isNotEmpty(),
                         selectedBook = it.selectedBook?.takeIf { selected -> selected.id == bookId }
                             ?.copy(isOfflineAvailable = false) ?: it.selectedBook,
                         downloadStates = it.downloadStates - bookId
@@ -374,17 +441,6 @@ class AppViewModel(
         val serverUrl = uiState.value.serverUrl
 
         viewModelScope.launch {
-            if (serverUrl.isBlank()) {
-                _uiState.update {
-                    it.copy(
-                        isPreparingReader = false,
-                        readerPrepareProgress = null,
-                        readerError = "Serveur non configure."
-                    )
-                }
-                return@launch
-            }
-
             _uiState.update {
                 it.copy(
                     isPreparingReader = true,
@@ -448,10 +504,13 @@ class AppViewModel(
     private fun restoreSession() {
         viewModelScope.launch {
             val storedSession = authRepository.loadSession()
+            val offlineIds = downloadRepository.downloadedBookIds()
             _uiState.update {
                 it.copy(
                     serverUrl = storedSession.serverUrl,
                     accessToken = storedSession.accessToken,
+                    offlineBookIds = offlineIds,
+                    offlineBookCount = offlineIds.size,
                     sessionMessage = null
                 )
             }
@@ -467,6 +526,7 @@ class AppViewModel(
                 _uiState.update {
                     it.copy(
                         currentUser = user,
+                        isOfflineMode = false,
                         isInitialized = true,
                         sessionMessage = "Session restauree."
                     )
@@ -478,18 +538,31 @@ class AppViewModel(
             }.onFailure { error ->
                 if (error is ApiException && error.statusCode == 401) {
                     authRepository.clearToken()
+                    _uiState.update {
+                        it.copy(
+                            accessToken = "",
+                            currentUser = null,
+                            isOfflineMode = false,
+                            isInitialized = true,
+                            sessionMessage = "Session expiree, reconnecte-toi."
+                        )
+                    }
+                    return@onFailure
                 }
-                _uiState.update {
-                    it.copy(
-                        accessToken = "",
-                        currentUser = null,
-                        isInitialized = true,
-                        sessionMessage = if (error is ApiException && error.statusCode == 401) {
-                            "Session expiree, reconnecte-toi."
-                        } else {
-                            "Serveur indisponible pour restaurer la session."
-                        }
-                    )
+
+                val enteredOffline = enterOfflineMode(
+                    message = "Serveur indisponible, mode hors ligne active.",
+                    query = uiState.value.booksQuery
+                )
+                if (!enteredOffline) {
+                    _uiState.update {
+                        it.copy(
+                            currentUser = null,
+                            isOfflineMode = false,
+                            isInitialized = true,
+                            sessionMessage = "Serveur indisponible pour restaurer la session."
+                        )
+                    }
                 }
             }
         }
@@ -498,6 +571,12 @@ class AppViewModel(
     private fun loadBooks(reset: Boolean) {
         val state = uiState.value
         val serverUrl = state.serverUrl
+        if (state.isOfflineMode) {
+            viewModelScope.launch {
+                loadOfflineBooks(query = state.booksQuery)
+            }
+            return
+        }
         if (serverUrl.isBlank() || state.accessToken.isBlank()) {
             return
         }
@@ -544,6 +623,15 @@ class AppViewModel(
                 }
             }.onFailure { error ->
                 handleApiFailure(error)
+                if (error !is ApiException) {
+                    val enteredOffline = enterOfflineMode(
+                        message = "Serveur indisponible, bibliotheque hors ligne affichee.",
+                        query = query
+                    )
+                    if (enteredOffline) {
+                        return@onFailure
+                    }
+                }
                 _uiState.update {
                     it.copy(
                         booksError = error.toFriendlyMessage(),
@@ -564,9 +652,87 @@ class AppViewModel(
             runCatching {
                 downloadRepository.downloadedBookIds()
             }.onSuccess { ids ->
-                _uiState.update { it.copy(offlineBookIds = ids) }
+                _uiState.update {
+                    it.copy(
+                        offlineBookIds = ids,
+                        offlineBookCount = ids.size
+                    )
+                }
             }
         }
+    }
+
+    private fun openLocalBook(bookId: String, fallbackError: String = "Livre hors ligne indisponible.") {
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    selectedBookId = bookId,
+                    selectedBookError = null,
+                    isLoadingBookDetail = true
+                )
+            }
+
+            val localBook = downloadRepository.localBookDetail(bookId)
+            val progress = loadLocalProgress()
+            _uiState.update {
+                if (localBook == null) {
+                    it.copy(
+                        selectedBookError = fallbackError,
+                        isLoadingBookDetail = false
+                    )
+                } else {
+                    it.copy(
+                        selectedBook = localBook.withLocalProgress(progress),
+                        selectedBookError = null,
+                        isLoadingBookDetail = false,
+                        localProgress = progress
+                    )
+                }
+            }
+        }
+    }
+
+    private suspend fun enterOfflineMode(message: String, query: String): Boolean {
+        val hasOfflineBooks = loadOfflineBooks(query = query, message = message)
+        if (!hasOfflineBooks) {
+            return false
+        }
+        _uiState.update {
+            it.copy(
+                currentUser = null,
+                isOfflineMode = true,
+                isInitialized = true,
+                isLoadingBooks = false,
+                isLoadingMoreBooks = false,
+                booksError = null,
+                serverError = null,
+                loginError = null
+            )
+        }
+        return true
+    }
+
+    private suspend fun loadOfflineBooks(query: String, message: String? = null): Boolean {
+        val allBooks = downloadRepository.downloadedBooks()
+        val progress = loadLocalProgress()
+        val filteredBooks = allBooks
+            .matchingOfflineQuery(query)
+            .withLocalProgress(progress)
+
+        _uiState.update {
+            it.copy(
+                books = filteredBooks,
+                booksTotal = filteredBooks.size,
+                offlineBookIds = allBooks.map { book -> book.id }.toSet(),
+                offlineBookCount = allBooks.size,
+                localProgress = progress,
+                booksError = null,
+                isLoadingBooks = false,
+                isLoadingMoreBooks = false,
+                sessionMessage = message ?: it.sessionMessage
+            )
+        }
+        return allBooks.isNotEmpty()
     }
 
     private suspend fun loadLocalProgress(): Map<String, BookProgressSnapshot> {
@@ -650,6 +816,17 @@ private fun List<BookListItemDto>.withLocalProgress(
         progress[book.id]?.let { snapshot ->
             book.copy(progressPercent = snapshot.progressPercent)
         } ?: book
+    }
+}
+
+private fun List<BookListItemDto>.matchingOfflineQuery(query: String): List<BookListItemDto> {
+    val cleanQuery = query.trim()
+    if (cleanQuery.isBlank()) {
+        return this
+    }
+    return filter { book ->
+        book.title.contains(cleanQuery, ignoreCase = true) ||
+            book.authors.any { author -> author.contains(cleanQuery, ignoreCase = true) }
     }
 }
 

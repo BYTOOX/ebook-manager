@@ -107,8 +107,11 @@ fun ServerSetupScreen(
     isCheckingServer: Boolean,
     serverStatus: String?,
     serverError: String?,
+    canContinueOffline: Boolean,
+    offlineBookCount: Int,
     onServerUrlChange: (String) -> Unit,
-    onCheckServer: () -> Unit
+    onCheckServer: () -> Unit,
+    onContinueOffline: () -> Unit
 ) {
     AureliaScreen {
         HeaderBlock(
@@ -139,6 +142,11 @@ fun ServerSetupScreen(
                 }
             }
         }
+        if (canContinueOffline) {
+            OutlinedButton(onClick = onContinueOffline, modifier = Modifier.fillMaxWidth()) {
+                Text("Continuer hors ligne ($offlineBookCount)")
+            }
+        }
         serverStatus?.let { StatusPill(label = it) }
         serverError?.let { ErrorText(message = it) }
     }
@@ -150,8 +158,11 @@ fun LoginScreen(
     isLoggingIn: Boolean,
     loginError: String?,
     sessionMessage: String?,
+    canContinueOffline: Boolean,
+    offlineBookCount: Int,
     onLogin: (String, String) -> Unit,
-    onChangeServer: () -> Unit
+    onChangeServer: () -> Unit,
+    onContinueOffline: () -> Unit
 ) {
     var username by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
@@ -166,6 +177,11 @@ fun LoginScreen(
         sessionMessage?.let { StatusPill(label = it) }
         OutlinedButton(onClick = onChangeServer, modifier = Modifier.fillMaxWidth()) {
             Text("Modifier le serveur")
+        }
+        if (canContinueOffline) {
+            OutlinedButton(onClick = onContinueOffline, modifier = Modifier.fillMaxWidth()) {
+                Text("Continuer hors ligne ($offlineBookCount)")
+            }
         }
         OutlinedTextField(
             value = username,
@@ -217,6 +233,7 @@ fun HomeScreen(
     total: Int,
     accessToken: String,
     offlineBookIds: Set<String>,
+    isOfflineMode: Boolean,
     isLoading: Boolean,
     error: String?,
     onRefresh: () -> Unit,
@@ -227,11 +244,21 @@ fun HomeScreen(
 
     AureliaScreen {
         HeaderBlock(
-            eyebrow = displayName?.let { "Connecte: $it" } ?: "Connecte",
+            eyebrow = if (isOfflineMode) {
+                "Hors ligne"
+            } else {
+                displayName?.let { "Connecte: $it" } ?: "Connecte"
+            },
             title = currentBook?.title ?: "Bibliotheque Aurelia",
             subtitle = currentBook?.authorLine ?: "Aucun livre charge"
         )
-        StatusPill(label = "API connectee: $serverUrl")
+        StatusPill(
+            label = if (isOfflineMode) {
+                "Mode hors ligne: livres telecharges uniquement"
+            } else {
+                "API connectee: $serverUrl"
+            }
+        )
         currentBook?.progressPercent?.let { progress ->
             LinearProgressIndicator(
                 progress = { progressFraction(progress) },
@@ -247,16 +274,20 @@ fun HomeScreen(
                 Text("Bibliotheque")
             }
         }
-        StatusPill(label = "$total livre(s) serveur")
+        StatusPill(label = if (isOfflineMode) "$total livre(s) hors ligne" else "$total livre(s) serveur")
         error?.let { ErrorText(message = it) }
         if (isLoading) {
             LoadingRow("Chargement des livres")
         } else if (books.isEmpty()) {
             EmptyState(
-                title = "Aucun livre",
-                message = "Importe un EPUB depuis Aurelia Web, puis recharge la bibliotheque Android."
+                title = if (isOfflineMode) "Aucun livre hors ligne" else "Aucun livre",
+                message = if (isOfflineMode) {
+                    "Reconnecte Aurelia puis telecharge un livre pour le garder sur ce telephone."
+                } else {
+                    "Importe un EPUB depuis Aurelia Web, puis recharge la bibliotheque Android."
+                }
             )
-            OutlinedButton(onClick = onRefresh) {
+            OutlinedButton(onClick = onRefresh, enabled = !isOfflineMode) {
                 Text("Recharger")
             }
         } else {
@@ -281,6 +312,7 @@ fun LibraryScreen(
     searchQuery: String,
     accessToken: String,
     offlineBookIds: Set<String>,
+    isOfflineMode: Boolean,
     isLoading: Boolean,
     isLoadingMore: Boolean,
     error: String?,
@@ -305,8 +337,12 @@ fun LibraryScreen(
     AureliaScreen {
         HeaderBlock(
             eyebrow = "Bibliotheque",
-            title = "Livres serveur",
-            subtitle = "$total livre(s) dans Aurelia."
+            title = if (isOfflineMode) "Livres hors ligne" else "Livres serveur",
+            subtitle = if (isOfflineMode) {
+                "$total livre(s) telecharge(s) sur ce telephone."
+            } else {
+                "$total livre(s) dans Aurelia."
+            }
         )
         OutlinedTextField(
             value = localSearchQuery,
@@ -324,8 +360,8 @@ fun LibraryScreen(
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedButton(onClick = onRefresh, enabled = !isLoading) {
-                Text("Recharger")
+            OutlinedButton(onClick = onRefresh, enabled = !isLoading && !isOfflineMode) {
+                Text(if (isOfflineMode) "Hors ligne" else "Recharger")
             }
             if (localSearchQuery.isNotBlank()) {
                 TextButton(onClick = { localSearchQuery = "" }) {
@@ -339,7 +375,11 @@ fun LibraryScreen(
         } else if (books.isEmpty()) {
             EmptyState(
                 title = "Aucun resultat",
-                message = "Aucun livre ne correspond a cette recherche."
+                message = if (isOfflineMode) {
+                    "Aucun livre telecharge ne correspond a cette recherche."
+                } else {
+                    "Aucun livre ne correspond a cette recherche."
+                }
             )
         } else {
             books.forEach { book ->
@@ -350,7 +390,7 @@ fun LibraryScreen(
                     onClick = { onOpenBook(book) }
                 )
             }
-            if (books.size < total) {
+            if (!isOfflineMode && books.size < total) {
                 OutlinedButton(
                     onClick = onLoadMore,
                     enabled = !isLoadingMore,
@@ -379,6 +419,7 @@ fun BookDetailScreen(
     isPreparingReader: Boolean,
     readerPrepareProgress: Int?,
     readerError: String?,
+    isOfflineMode: Boolean,
     isLoading: Boolean,
     error: String?,
     onRead: () -> Unit,
@@ -486,12 +527,16 @@ fun BookDetailScreen(
                                 DownloadActionButton(
                                     isDownloaded = isDownloaded,
                                     downloadState = currentDownloadState,
+                                    canDownload = !isOfflineMode,
                                     onDownload = onDownload,
                                     onRemoveDownload = onRemoveDownload
                                 )
                             }
                             if (isDownloaded) {
                                 StatusPill(label = "Disponible hors ligne")
+                            }
+                            if (isOfflineMode) {
+                                StatusPill(label = "Mode hors ligne")
                             }
                             readerError?.let { ErrorText(message = it) }
                             currentDownloadState.error?.let { ErrorText(message = it) }
@@ -516,6 +561,7 @@ fun BookDetailScreen(
 fun SettingsScreen(
     serverUrl: String,
     username: String?,
+    isOfflineMode: Boolean,
     sessionMessage: String?,
     isLoggingOut: Boolean,
     onLogout: () -> Unit
@@ -524,12 +570,16 @@ fun SettingsScreen(
         HeaderBlock(
             eyebrow = "Parametres",
             title = "Aurelia Reader",
-            subtitle = "Session Android connectee au serveur Aurelia."
+            subtitle = if (isOfflineMode) {
+                "Lecture locale sans connexion serveur."
+            } else {
+                "Session Android connectee au serveur Aurelia."
+            }
         )
-        SettingsRow("Serveur", serverUrl.ifBlank { "Non configure" })
-        SettingsRow("Compte", username ?: "Non connecte")
+        SettingsRow("Serveur", if (isOfflineMode) "Hors ligne" else serverUrl.ifBlank { "Non configure" })
+        SettingsRow("Compte", username ?: if (isOfflineMode) "Session locale" else "Non connecte")
         SettingsRow("Theme app", "Noir et or")
-        SettingsRow("Version", "0.1.0")
+        SettingsRow("Version", "0.1.1")
         sessionMessage?.let { StatusPill(label = it) }
         OutlinedButton(onClick = onLogout, enabled = !isLoggingOut, modifier = Modifier.fillMaxWidth()) {
             if (isLoggingOut) {
@@ -656,6 +706,7 @@ private fun BookRow(
 private fun DownloadActionButton(
     isDownloaded: Boolean,
     downloadState: BookDownloadUiState,
+    canDownload: Boolean,
     onDownload: () -> Unit,
     onRemoveDownload: () -> Unit
 ) {
@@ -706,10 +757,11 @@ private fun DownloadActionButton(
             DownloadButtonMode.Ready -> {
                 OutlinedButton(
                     onClick = onDownload,
+                    enabled = canDownload,
                     modifier = Modifier.animateContentSize(animationSpec = tween(180))
                 ) {
                     Icon(Icons.Outlined.Download, contentDescription = null)
-                    Text("Telecharger")
+                    Text(if (canDownload) "Telecharger" else "Hors ligne")
                 }
             }
         }
@@ -736,11 +788,13 @@ private fun BookCover(
         return
     }
 
-    val request = ImageRequest.Builder(context)
+    val requestBuilder = ImageRequest.Builder(context)
         .data(coverUrl)
-        .addHeader("Authorization", "Bearer $accessToken")
         .crossfade(true)
-        .build()
+    if (accessToken.isNotBlank() && coverUrl.startsWith("http", ignoreCase = true)) {
+        requestBuilder.addHeader("Authorization", "Bearer $accessToken")
+    }
+    val request = requestBuilder.build()
 
     Box(
         modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant),

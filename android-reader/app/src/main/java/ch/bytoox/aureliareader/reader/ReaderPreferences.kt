@@ -164,14 +164,14 @@ private fun ReaderTheme.themeColors(): ReaderThemeColors {
     return when (this) {
         ReaderTheme.White -> ReaderThemeColors(Theme.LIGHT, null, null)
         ReaderTheme.Gray -> ReaderThemeColors(
-            readiumTheme = null,
+            readiumTheme = Theme.DARK,
             backgroundColor = AndroidColor.parseColor("#1D1D1D"),
             textColor = AndroidColor.parseColor("#E8E3D4")
         )
         ReaderTheme.Black -> ReaderThemeColors(Theme.DARK, null, null)
         ReaderTheme.Sepia -> ReaderThemeColors(Theme.SEPIA, null, null)
         ReaderTheme.Aurelia -> ReaderThemeColors(
-            readiumTheme = null,
+            readiumTheme = Theme.DARK,
             backgroundColor = AndroidColor.parseColor("#0B0B08"),
             textColor = AndroidColor.parseColor("#C9A227")
         )

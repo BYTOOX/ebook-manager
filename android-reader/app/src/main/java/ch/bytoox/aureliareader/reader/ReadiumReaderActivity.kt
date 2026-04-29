@@ -171,13 +171,13 @@ class ReadiumReaderActivity : FragmentActivity() {
         return supportFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? EpubNavigatorFragment
     }
 
-    internal fun applyContentTheme(preferences: ReaderPreferences) {
+    internal suspend fun applyContentTheme(preferences: ReaderPreferences): Boolean {
         val script = buildContentThemeScript(preferences.contentTheme())
-        lifecycleScope.launch {
-            runCatching {
-                navigator()?.evaluateJavascript(script)
-            }
-        }
+        val navigator = navigator() ?: return false
+        return runCatching {
+            navigator.evaluateJavascript(script)
+            true
+        }.getOrDefault(false)
     }
 
     internal suspend fun loadInitialLocator(): Locator? {
@@ -254,6 +254,7 @@ private fun ReadiumReaderScreen(
     var settingsVisible by rememberSaveable { mutableStateOf(false) }
     var chaptersVisible by rememberSaveable { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(true) }
+    var isContentThemed by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var progressLabel by remember { mutableStateOf("0%") }
     var chapterLabel by remember { mutableStateOf("Debut") }
@@ -268,14 +269,18 @@ private fun ReadiumReaderScreen(
 
     LaunchedEffect(readerPreferences) {
         preferencesStore.save(readerPreferences)
-        activity.navigator()?.submitPreferences(readerPreferences.toEpubPreferences())
-        activity.applyContentTheme(readerPreferences)
+        activity.navigator()?.let { navigator ->
+            isContentThemed = false
+            navigator.submitPreferences(readerPreferences.toEpubPreferences())
+            isContentThemed = activity.applyContentTheme(readerPreferences)
+        }
         lastThemePatchHref = null
     }
 
     LaunchedEffect(filePath, containerId) {
         if (filePath.isBlank()) {
             isLoading = false
+            isContentThemed = true
             error = "Aucun fichier local a ouvrir."
             return@LaunchedEffect
         }
@@ -305,8 +310,9 @@ private fun ReadiumReaderScreen(
                 containerId = containerId,
                 publication = session.publication
             )
-            activity.navigator()?.let { navigator ->
-                activity.applyContentTheme(readerPreferences)
+            val navigator = activity.navigator()
+            if (navigator != null) {
+                isContentThemed = activity.applyContentTheme(readerPreferences)
                 navigator.addInputListener(
                     object : InputListener {
                         override fun onTap(event: TapEvent): Boolean {
@@ -318,6 +324,8 @@ private fun ReadiumReaderScreen(
                         }
                     }
                 )
+            } else {
+                isContentThemed = true
             }
             isLoading = false
 
@@ -331,7 +339,8 @@ private fun ReadiumReaderScreen(
                 val href = locator.href.toString()
                 if (href != lastThemePatchHref) {
                     lastThemePatchHref = href
-                    activity.applyContentTheme(readerPreferences)
+                    isContentThemed = false
+                    isContentThemed = activity.applyContentTheme(readerPreferences)
                 }
                 withContext(Dispatchers.IO) {
                     activity.saveLocator(locator, currentChapter)
@@ -339,6 +348,7 @@ private fun ReadiumReaderScreen(
             }
         }.onFailure { throwable ->
             isLoading = false
+            isContentThemed = true
             error = throwable.message ?: "Impossible d'ouvrir cet EPUB."
         }
     }
@@ -362,6 +372,10 @@ private fun ReadiumReaderScreen(
         )
 
         ReaderBrightnessLayer(brightness = readerPreferences.brightness)
+
+        if (!isContentThemed && error == null) {
+            ReaderThemeCover()
+        }
 
         if (isLoading || error != null) {
             ReaderStatusOverlay(
@@ -419,6 +433,14 @@ private fun ReaderBrightnessLayer(brightness: Float) {
                 .background(Color.Black.copy(alpha = dimAlpha))
         )
     }
+}
+
+@Composable
+private fun ReaderThemeCover() {
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {}
 }
 
 @Composable
@@ -883,14 +905,22 @@ private fun buildContentThemeScript(theme: ReaderContentTheme): String {
           color: ${theme.text} !important;
           -webkit-text-fill-color: ${theme.text} !important;
         }
-        body :not(img):not(svg):not(video):not(canvas) {
+        html *,
+        body *:not(img):not(svg):not(video):not(canvas) {
           color: ${theme.text} !important;
           -webkit-text-fill-color: ${theme.text} !important;
           border-color: currentColor !important;
           text-shadow: none !important;
         }
+        p, span, div, section, article, main, header, footer, aside,
+        blockquote, figcaption, dt, dd, li {
+          color: ${theme.text} !important;
+          -webkit-text-fill-color: ${theme.text} !important;
+        }
         h1, h2, h3, h4, h5, h6,
-        [class*="title"], [class*="titre"], [class*="chapter"], [class*="chapitre"], [role*="doc-chapter"] {
+        [class*="title"], [class*="titre"], [class*="chapter"], [class*="chapitre"],
+        [id*="title"], [id*="titre"], [id*="chapter"], [id*="chapitre"],
+        [role*="doc-chapter"], [epub\:type*="chapter"], [epub\:type*="titlepage"] {
           color: ${theme.text} !important;
           -webkit-text-fill-color: ${theme.text} !important;
           background-color: transparent !important;

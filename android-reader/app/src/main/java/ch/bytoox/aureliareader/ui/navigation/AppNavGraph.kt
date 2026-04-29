@@ -156,10 +156,20 @@ fun AppNavGraph(appViewModel: AppViewModel) {
                     isCheckingServer = uiState.isCheckingServer,
                     serverStatus = uiState.serverStatus,
                     serverError = uiState.serverError,
+                    canContinueOffline = uiState.canContinueOffline,
+                    offlineBookCount = uiState.offlineBookCount,
                     onServerUrlChange = appViewModel::updateServerUrl,
                     onCheckServer = {
                         appViewModel.checkServer {
                             navController.navigate(Route.Login.path) {
+                                launchSingleTop = true
+                            }
+                        }
+                    },
+                    onContinueOffline = {
+                        appViewModel.continueOffline {
+                            navController.navigate(Route.Home.path) {
+                                popUpTo(Route.SetupServer.path) { inclusive = true }
                                 launchSingleTop = true
                             }
                         }
@@ -172,6 +182,8 @@ fun AppNavGraph(appViewModel: AppViewModel) {
                     isLoggingIn = uiState.isLoggingIn,
                     loginError = uiState.loginError,
                     sessionMessage = uiState.sessionMessage,
+                    canContinueOffline = uiState.canContinueOffline,
+                    offlineBookCount = uiState.offlineBookCount,
                     onLogin = { username, password ->
                         appViewModel.login(username, password) {
                             navController.navigate(Route.Home.path) {
@@ -184,6 +196,14 @@ fun AppNavGraph(appViewModel: AppViewModel) {
                         navController.navigate(Route.SetupServer.path) {
                             launchSingleTop = true
                         }
+                    },
+                    onContinueOffline = {
+                        appViewModel.continueOffline {
+                            navController.navigate(Route.Home.path) {
+                                popUpTo(Route.Login.path) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        }
                     }
                 )
             }
@@ -195,6 +215,7 @@ fun AppNavGraph(appViewModel: AppViewModel) {
                     total = uiState.booksTotal,
                     accessToken = uiState.accessToken,
                     offlineBookIds = uiState.offlineBookIds,
+                    isOfflineMode = uiState.isOfflineMode,
                     isLoading = uiState.isLoadingBooks,
                     error = uiState.booksError,
                     onRefresh = appViewModel::refreshBooks,
@@ -212,6 +233,7 @@ fun AppNavGraph(appViewModel: AppViewModel) {
                     searchQuery = uiState.booksQuery,
                     accessToken = uiState.accessToken,
                     offlineBookIds = uiState.offlineBookIds,
+                    isOfflineMode = uiState.isOfflineMode,
                     isLoading = uiState.isLoadingBooks,
                     isLoadingMore = uiState.isLoadingMoreBooks,
                     error = uiState.booksError,
@@ -238,6 +260,7 @@ fun AppNavGraph(appViewModel: AppViewModel) {
                     isPreparingReader = uiState.isPreparingReader,
                     readerPrepareProgress = uiState.readerPrepareProgress,
                     readerError = uiState.readerError,
+                    isOfflineMode = uiState.isOfflineMode,
                     isLoading = uiState.isLoadingBookDetail,
                     error = uiState.selectedBookError,
                     onRead = appViewModel::openSelectedBookReader,
@@ -256,6 +279,7 @@ fun AppNavGraph(appViewModel: AppViewModel) {
                 SettingsScreen(
                     serverUrl = uiState.serverUrl,
                     username = uiState.currentUser?.username,
+                    isOfflineMode = uiState.isOfflineMode,
                     sessionMessage = uiState.sessionMessage,
                     isLoggingOut = uiState.isLoggingOut,
                     onLogout = {
