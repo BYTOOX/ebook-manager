@@ -14,6 +14,7 @@ os.environ["SECRET_KEY"] = "test-secret-with-at-least-thirty-two-bytes"
 TEST_LIBRARY_PATH = Path(__file__).parent / ".test-library"
 os.environ["LIBRARY_PATH"] = str(TEST_LIBRARY_PATH)
 os.environ["INCOMING_PATH"] = str(TEST_LIBRARY_PATH / "incoming")
+os.environ["METADATA_AUTO_ENRICH_ON_IMPORT"] = "false"
 
 from fastapi.testclient import TestClient  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -740,6 +741,146 @@ def test_metadata_auto_applies_high_confidence_candidate(monkeypatch) -> None:
     assert payload["book"]["title"] == "Aurelia Auto Edition"
     assert payload["book"]["authors"] == ["Elian Vale"]
     assert payload["book"]["metadata_provider_id"] == "gb-auto"
+
+
+def test_metadata_batch_auto_applies_library(monkeypatch) -> None:
+    client = TestClient(app)
+    authenticate_client(client)
+
+    first = client.post(
+        "/api/v1/books/upload",
+        files={
+            "file": (
+                "batch-one.epub",
+                make_test_epub("Batch One", "9780000000911"),
+                "application/epub+zip",
+            )
+        },
+    )
+    second = client.post(
+        "/api/v1/books/upload",
+        files={
+            "file": (
+                "batch-two.epub",
+                make_test_epub("Batch Two", "9780000000912"),
+                "application/epub+zip",
+            )
+        },
+    )
+    assert first.status_code == 201
+    assert second.status_code == 201
+
+    def fake_search_candidates(self, db, book, payload):
+        provider_id = f"gb-batch-{book.title.casefold().replace(' ', '-')}"
+        result = MetadataProviderResult(
+            book_id=book.id,
+            provider="googlebooks",
+            provider_item_id=provider_id,
+            query=payload.query or book.title,
+            raw_json={},
+            normalized_json={
+                "provider": "googlebooks",
+                "provider_item_id": provider_id,
+                "title": f"{book.title} Enrichi",
+                "authors": ["Elian Vale"],
+                "language": "fr",
+            },
+            score=Decimal("0.930"),
+        )
+        db.add(result)
+        db.flush()
+        return [
+            MetadataCandidate(
+                id=result.id,
+                provider="googlebooks",
+                provider_item_id=provider_id,
+                score=0.93,
+                title=f"{book.title} Enrichi",
+                authors=["Elian Vale"],
+                language="fr",
+            )
+        ]
+
+    monkeypatch.setattr(MetadataService, "search_candidates", fake_search_candidates)
+
+    auto = client.post(
+        "/api/v1/books/metadata/auto",
+        json={"fields": ["association", "title", "authors", "language"]},
+    )
+    assert auto.status_code == 200
+    payload = auto.json()
+    assert payload["scanned"] == 2
+    assert payload["applied"] == 2
+    assert payload["needs_review"] == 0
+    assert payload["errors"] == 0
+    assert {item["status"] for item in payload["items"]} == {"applied"}
+
+    books = client.get("/api/v1/books?sort=title&order=asc")
+    assert books.status_code == 200
+    assert [book["title"] for book in books.json()["items"]] == [
+        "Batch One Enrichi",
+        "Batch Two Enrichi",
+    ]
+
+
+def test_upload_auto_enriches_imported_book_when_enabled(monkeypatch) -> None:
+    client = TestClient(app)
+    authenticate_client(client)
+    monkeypatch.setattr(get_settings(), "METADATA_AUTO_ENRICH_ON_IMPORT", True)
+
+    def fake_search_candidates(self, db, book, payload):
+        result = MetadataProviderResult(
+            book_id=book.id,
+            provider="googlebooks",
+            provider_item_id="gb-import-auto",
+            query=payload.query or book.title,
+            raw_json={},
+            normalized_json={
+                "provider": "googlebooks",
+                "provider_item_id": "gb-import-auto",
+                "title": "Import Auto Edition",
+                "authors": ["Elian Vale"],
+                "description": "Import enrichi automatiquement.",
+                "language": "fr",
+            },
+            score=Decimal("0.940"),
+        )
+        db.add(result)
+        db.flush()
+        return [
+            MetadataCandidate(
+                id=result.id,
+                provider="googlebooks",
+                provider_item_id="gb-import-auto",
+                score=0.94,
+                title="Import Auto Edition",
+                authors=["Elian Vale"],
+                description="Import enrichi automatiquement.",
+                language="fr",
+            )
+        ]
+
+    monkeypatch.setattr(MetadataService, "search_candidates", fake_search_candidates)
+
+    upload = client.post(
+        "/api/v1/books/upload",
+        files={
+            "file": (
+                "import-auto.epub",
+                make_test_epub("Import Raw", "9780000000921"),
+                "application/epub+zip",
+            )
+        },
+    )
+    assert upload.status_code == 201
+    book_id = upload.json()["book_id"]
+
+    detail = client.get(f"/api/v1/books/{book_id}")
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["title"] == "Import Auto Edition"
+    assert payload["authors"] == ["Elian Vale"]
+    assert payload["metadata_provider_id"] == "gb-import-auto"
 
 
 def test_metadata_apply_cover_replaces_file_and_bumps_cover_url(monkeypatch) -> None:

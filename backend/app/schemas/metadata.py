@@ -81,6 +81,7 @@ class MetadataAutoApplyPayload(BaseModel):
 
 
 MetadataAutoApplyStatus = Literal["applied", "needs_review", "no_match"]
+MetadataLibraryAutoApplyStatus = Literal["applied", "needs_review", "no_match", "skipped", "error"]
 
 
 class MetadataAutoApplyResponse(BaseModel):
@@ -91,3 +92,46 @@ class MetadataAutoApplyResponse(BaseModel):
     total: int = 0
     applied_fields: list[MetadataApplyField] = Field(default_factory=list)
     book: BookDetail | None = None
+
+
+class MetadataLibraryAutoApplyPayload(BaseModel):
+    providers: list[MetadataProvider] = Field(default_factory=lambda: ["googlebooks"])
+    fields: list[MetadataApplyField] = Field(
+        default_factory=lambda: [
+            "association",
+            "title",
+            "subtitle",
+            "authors",
+            "description",
+            "language",
+            "isbn",
+            "publisher",
+            "published_date",
+            "cover",
+        ]
+    )
+    min_score: float = Field(default=0.85, ge=0, le=1)
+    review_margin: float = Field(default=0.04, ge=0, le=1)
+    only_missing_provider: bool = False
+    limit: int | None = Field(default=None, ge=1, le=5000)
+
+
+class MetadataLibraryAutoApplyItem(BaseModel):
+    book_id: UUID
+    title: str
+    status: MetadataLibraryAutoApplyStatus
+    message: str
+    candidate_title: str | None = None
+    candidate_provider_id: str | None = None
+    score: float | None = None
+    applied_fields: list[MetadataApplyField] = Field(default_factory=list)
+
+
+class MetadataLibraryAutoApplyResponse(BaseModel):
+    scanned: int
+    applied: int
+    needs_review: int
+    no_match: int
+    skipped: int
+    errors: int
+    items: list[MetadataLibraryAutoApplyItem] = Field(default_factory=list)

@@ -9,6 +9,7 @@ import {
   Moon,
   RefreshCw,
   Settings2,
+  Sparkles,
   Trash2,
   Upload,
   Wifi
@@ -16,7 +17,15 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { apiFetch, scanIncoming, type ImportJobsResponse, type ScanResponse } from "../lib/api";
+import {
+  apiFetch,
+  autoApplyLibraryMetadata,
+  scanIncoming,
+  type ImportJobsResponse,
+  type MetadataLibraryAutoApplyItem,
+  type MetadataLibraryAutoApplyResponse,
+  type ScanResponse
+} from "../lib/api";
 import { db, type OfflineBook } from "../lib/db";
 import { removeOfflineBook } from "../lib/offline";
 import { useAuth } from "../providers/AuthProvider";
@@ -50,6 +59,23 @@ function formatBytes(size?: number) {
     unit += 1;
   }
   return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function metadataRowClass(status: MetadataLibraryAutoApplyItem["status"]) {
+  if (status === "applied") {
+    return "maintenance-row success";
+  }
+  if (status === "needs_review") {
+    return "maintenance-row warning";
+  }
+  if (status === "error") {
+    return "maintenance-row failed";
+  }
+  return "maintenance-row";
+}
+
+function formatScore(score: number | null) {
+  return score === null ? "" : `${Math.round(score * 100)}%`;
 }
 
 async function readLocalStats(): Promise<LocalStats> {
@@ -131,6 +157,9 @@ export function AdvancedSettingsPage() {
   const { state: syncState, flush } = useSyncState();
   const [scanResult, setScanResult] = useState<ScanResponse | null>(null);
   const [scanBusy, setScanBusy] = useState(false);
+  const [metadataResult, setMetadataResult] = useState<MetadataLibraryAutoApplyResponse | null>(null);
+  const [metadataBusy, setMetadataBusy] = useState(false);
+  const [metadataError, setMetadataError] = useState<string | null>(null);
   const [localBusy, setLocalBusy] = useState(false);
   const [localMessage, setLocalMessage] = useState<string | null>(null);
 
@@ -171,6 +200,21 @@ export function AdvancedSettingsPage() {
       await queryClient.invalidateQueries({ queryKey: ["advanced", "import-jobs"] });
     } finally {
       setScanBusy(false);
+    }
+  }
+
+  async function handleLibraryMetadataAuto() {
+    setMetadataBusy(true);
+    setMetadataResult(null);
+    setMetadataError(null);
+    try {
+      const result = await autoApplyLibraryMetadata();
+      setMetadataResult(result);
+      await queryClient.invalidateQueries({ queryKey: ["books"] });
+    } catch (error) {
+      setMetadataError(error instanceof Error ? error.message : "Enrichissement impossible");
+    } finally {
+      setMetadataBusy(false);
     }
   }
 
@@ -367,6 +411,77 @@ export function AdvancedSettingsPage() {
               <p className="muted-line">Aucun import.</p>
             )}
           </div>
+        </section>
+
+        <section className="settings-section">
+          <div className="metadata-heading">
+            <Sparkles size={18} aria-hidden="true" />
+            <h2>Metadonnees</h2>
+          </div>
+          <button
+            className="primary-action wide"
+            onClick={() => void handleLibraryMetadataAuto()}
+            disabled={metadataBusy}
+          >
+            {metadataBusy ? (
+              <Loader2 className="spin" size={18} aria-hidden="true" />
+            ) : (
+              <Sparkles size={18} aria-hidden="true" />
+            )}
+            Enrichir toute la bibliotheque
+          </button>
+          {metadataResult && (
+            <div className="stat-grid">
+              <div>
+                <span>Scannes</span>
+                <strong>{metadataResult.scanned}</strong>
+              </div>
+              <div>
+                <span>Appliques</span>
+                <strong>{metadataResult.applied}</strong>
+              </div>
+              <div>
+                <span>A verifier</span>
+                <strong>{metadataResult.needs_review}</strong>
+              </div>
+              <div>
+                <span>Sans match</span>
+                <strong>{metadataResult.no_match}</strong>
+              </div>
+              <div>
+                <span>Erreurs</span>
+                <strong>{metadataResult.errors}</strong>
+              </div>
+            </div>
+          )}
+          {metadataError && (
+            <p className="notice error">
+              <AlertCircle size={16} aria-hidden="true" />
+              {metadataError}
+            </p>
+          )}
+          {metadataResult && metadataResult.items.length > 0 && (
+            <div className="maintenance-list">
+              {metadataResult.items.slice(0, 8).map((item) => (
+                <div key={item.book_id} className={metadataRowClass(item.status)}>
+                  <div>
+                    <strong>{item.title}</strong>
+                    <span>{item.status}</span>
+                  </div>
+                  <p>
+                    {item.candidate_title ? (
+                      <>
+                        <span>{item.candidate_title}</span>
+                        <span>{formatScore(item.score)}</span>
+                      </>
+                    ) : (
+                      <span>{item.message}</span>
+                    )}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       </div>
     </main>

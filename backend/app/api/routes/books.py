@@ -35,12 +35,15 @@ from app.schemas.metadata import (
     MetadataApplyPayload,
     MetadataAutoApplyPayload,
     MetadataAutoApplyResponse,
+    MetadataLibraryAutoApplyPayload,
+    MetadataLibraryAutoApplyResponse,
     MetadataSearchPayload,
     MetadataSearchResponse,
 )
 from app.services.epub_service import EpubService, clean_metadata_text
 from app.services.import_service import ImportService
 from app.services.bookmark_service import serialize_bookmark
+from app.services.metadata_enrichment_service import MetadataEnrichmentService, auto_result_to_response
 from app.services.metadata_service import MetadataService
 from app.services.progress_service import apply_reading_progress, serialize_progress
 from app.services.storage_service import StorageService
@@ -112,24 +115,6 @@ def _clean_candidate_text(value: object) -> str | None:
     if value is None:
         return None
     return clean_metadata_text(str(value))
-
-
-def _candidate_has_field(candidate: dict[str, object], field: MetadataApplyField) -> bool:
-    if field == "association":
-        return True
-    if field == "authors":
-        authors = candidate.get("authors")
-        return isinstance(authors, list) and any(str(author).strip() for author in authors)
-    if field == "cover":
-        return bool(_clean_candidate_text(candidate.get("cover_url")))
-    return bool(_clean_candidate_text(candidate.get(field)))
-
-
-def _available_metadata_fields(
-    candidate: dict[str, object],
-    requested_fields: list[MetadataApplyField],
-) -> list[MetadataApplyField]:
-    return [field for field in requested_fields if _candidate_has_field(candidate, field)]
 
 
 def _apply_metadata_candidate(
@@ -597,6 +582,24 @@ def search_book_metadata(
     return MetadataSearchResponse(items=candidates, total=len(candidates))
 
 
+@router.post("/metadata/auto", response_model=MetadataLibraryAutoApplyResponse)
+def auto_apply_library_metadata(
+    payload: MetadataLibraryAutoApplyPayload,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> MetadataLibraryAutoApplyResponse:
+    del current_user
+    return MetadataEnrichmentService(get_settings()).auto_enrich_library(
+        db,
+        providers=payload.providers,
+        fields=payload.fields,
+        min_score=payload.min_score,
+        review_margin=payload.review_margin,
+        only_missing_provider=payload.only_missing_provider,
+        limit=payload.limit,
+    )
+
+
 @router.post("/{book_id}/metadata/auto", response_model=MetadataAutoApplyResponse)
 def auto_apply_book_metadata(
     book_id: UUID,
@@ -605,68 +608,21 @@ def auto_apply_book_metadata(
     db: DbSession,
 ) -> MetadataAutoApplyResponse:
     book = _get_book_or_404(db, book_id)
-    service = MetadataService(get_settings())
-    search_payload = MetadataSearchPayload(
+    result = MetadataEnrichmentService(get_settings()).auto_enrich_book(
+        db,
+        book,
         providers=payload.providers,
         query=payload.query,
         isbn=payload.isbn,
+        fields=payload.fields,
+        min_score=payload.min_score,
+        review_margin=payload.review_margin,
     )
-    candidates = service.search_candidates(db, book, search_payload)
-    if not candidates:
-        db.commit()
-        return MetadataAutoApplyResponse(
-            status="no_match",
-            message="Aucune proposition trouvee",
-        )
-
-    best = candidates[0]
-    second = candidates[1] if len(candidates) > 1 else None
-    if best.score < payload.min_score:
-        db.commit()
-        return MetadataAutoApplyResponse(
-            status="needs_review",
-            message=f"Meilleur score trop bas ({round(best.score * 100)}%)",
-            candidate=best,
-            items=candidates,
-            total=len(candidates),
-        )
-    if second and best.score - second.score < payload.review_margin:
-        db.commit()
-        return MetadataAutoApplyResponse(
-            status="needs_review",
-            message="Plusieurs propositions proches, verification conseillee",
-            candidate=best,
-            items=candidates,
-            total=len(candidates),
-        )
-
-    result = db.get(MetadataProviderResult, best.id)
-    if result is None or result.book_id != book.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Metadata result not found")
-    candidate = result.normalized_json if isinstance(result.normalized_json, dict) else {}
-    fields = _available_metadata_fields(candidate, payload.fields)
-    if not fields:
-        db.commit()
-        return MetadataAutoApplyResponse(
-            status="needs_review",
-            message="La proposition ne contient aucun champ applicable",
-            candidate=best,
-            items=candidates,
-            total=len(candidates),
-        )
-
-    applied = _apply_metadata_candidate(db, book, result, set(fields))
     db.commit()
-    db.refresh(book)
-    return MetadataAutoApplyResponse(
-        status="applied",
-        message=f"Association appliquee automatiquement ({round(best.score * 100)}%)",
-        candidate=best,
-        items=candidates,
-        total=len(candidates),
-        applied_fields=applied,
-        book=get_book(book_id, current_user, db),
-    )
+    if result.status == "applied":
+        db.refresh(book)
+        return auto_result_to_response(result, book=get_book(book_id, current_user, db))
+    return auto_result_to_response(result)
 
 
 @router.post("/{book_id}/metadata/apply", response_model=BookDetail)

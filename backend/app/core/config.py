@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_MB: int = 200
     METADATA_OPENLIBRARY_ENABLED: bool = True
     METADATA_GOOGLEBOOKS_ENABLED: bool = True
+    METADATA_AUTO_ENRICH_ON_IMPORT: bool = True
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

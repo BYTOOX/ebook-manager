@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,7 +12,13 @@ from app.core.config import Settings
 from app.models.book import Author, Book, BookAuthor
 from app.models.import_job import ImportJob
 from app.services.epub_service import EpubService
+from app.services.metadata_enrichment_service import (
+    DEFAULT_AUTO_METADATA_FIELDS,
+    MetadataEnrichmentService,
+)
 from app.services.storage_service import StorageService
+
+logger = logging.getLogger(__name__)
 
 
 class ImportService:
@@ -105,6 +112,19 @@ class ImportService:
             db.add(job)
             db.commit()
             db.refresh(job)
+            if self.settings.METADATA_AUTO_ENRICH_ON_IMPORT:
+                try:
+                    db.refresh(book)
+                    MetadataEnrichmentService(self.settings).auto_enrich_book(
+                        db,
+                        book,
+                        fields=DEFAULT_AUTO_METADATA_FIELDS,
+                    )
+                    db.commit()
+                except Exception as exc:
+                    db.rollback()
+                    logger.warning("metadata enrichment during import failed for %s: %s", source_path, exc)
+                db.refresh(job)
             return job
         except Exception as exc:
             job.status = "failed"

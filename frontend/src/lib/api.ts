@@ -385,6 +385,27 @@ export type MetadataAutoApplyResponse = {
   book: BookDetail | null;
 };
 
+export type MetadataLibraryAutoApplyItem = {
+  book_id: string;
+  title: string;
+  status: "applied" | "needs_review" | "no_match" | "skipped" | "error";
+  message: string;
+  candidate_title: string | null;
+  candidate_provider_id: string | null;
+  score: number | null;
+  applied_fields: MetadataApplyField[];
+};
+
+export type MetadataLibraryAutoApplyResponse = {
+  scanned: number;
+  applied: number;
+  needs_review: number;
+  no_match: number;
+  skipped: number;
+  errors: number;
+  items: MetadataLibraryAutoApplyItem[];
+};
+
 export type BookmarkItem = {
   id: string;
   book_id: string;
@@ -448,6 +469,22 @@ export async function autoApplyBookMetadata(
   }
 ) {
   return apiFetch<MetadataAutoApplyResponse>(`/books/${bookId}/metadata/auto`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function autoApplyLibraryMetadata(
+  payload: {
+    providers?: MetadataProvider[];
+    fields?: MetadataApplyField[];
+    min_score?: number;
+    review_margin?: number;
+    only_missing_provider?: boolean;
+    limit?: number;
+  } = {}
+) {
+  return apiFetch<MetadataLibraryAutoApplyResponse>("/books/metadata/auto", {
     method: "POST",
     body: JSON.stringify(payload)
   });
