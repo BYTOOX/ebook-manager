@@ -20,6 +20,7 @@ import { Link, useParams } from "react-router-dom";
 import {
   apiFetch,
   applyBookMetadata,
+  autoApplyBookMetadata,
   searchBookMetadata,
   updateBook,
   type BookDetail,
@@ -69,7 +70,23 @@ const metadataApplyFields: { key: MetadataApplyField; label: string }[] = [
   { key: "cover", label: "Couverture" }
 ];
 
+const automaticApplyFields: MetadataApplyField[] = [
+  "association",
+  "title",
+  "subtitle",
+  "authors",
+  "description",
+  "language",
+  "isbn",
+  "publisher",
+  "published_date",
+  "cover"
+];
+
 function candidateValue(candidate: MetadataCandidate, field: MetadataApplyField) {
+  if (field === "association") {
+    return candidate.provider_item_id ?? candidate.provider;
+  }
   if (field === "authors") {
     return candidate.authors.join(", ");
   }
@@ -81,6 +98,9 @@ function candidateValue(candidate: MetadataCandidate, field: MetadataApplyField)
 }
 
 function currentValue(book: BookDetail, field: MetadataApplyField) {
+  if (field === "association") {
+    return book.metadata_provider_id ?? book.metadata_source ?? "";
+  }
   if (field === "authors") {
     return book.authors.join(", ");
   }
@@ -316,6 +336,45 @@ export function BookDetailPage() {
     }
   }
 
+  async function handleProviderAutoApply() {
+    if (!data || providerBusy) {
+      return;
+    }
+    setProviderBusy(true);
+    setProviderError(null);
+    setProviderMessage(null);
+    try {
+      const response = await autoApplyBookMetadata(data.id, {
+        providers: ["googlebooks"],
+        query: providerQuery.trim() || null,
+        isbn: data.isbn,
+        fields: automaticApplyFields,
+        min_score: 0.85,
+        review_margin: 0.04
+      });
+      setMetadataCandidates(response.items);
+      const selected = response.candidate ?? response.items[0] ?? null;
+      setSelectedCandidateId(selected?.id ?? null);
+      setSelectedFields(selected ? fieldsAvailable(selected) : []);
+      if (response.book) {
+        queryClient.setQueryData(["book", bookId], response.book);
+        if (response.applied_fields.includes("cover")) {
+          setCoverObjectUrl(null);
+          setCoverRevision((current) => current + 1);
+        }
+        if (await refreshOfflineBookMetadata(response.book)) {
+          setCoverRevision((current) => current + 1);
+        }
+        await queryClient.invalidateQueries({ queryKey: ["books"] });
+      }
+      setProviderMessage(response.message);
+    } catch (caught) {
+      setProviderError(caught instanceof Error ? caught.message : "Enrichissement automatique impossible");
+    } finally {
+      setProviderBusy(false);
+    }
+  }
+
   function handleSelectCandidate(candidate: MetadataCandidate) {
     setSelectedCandidateId(candidate.id);
     setSelectedFields(fieldsAvailable(candidate));
@@ -345,7 +404,13 @@ export function BookDetailPage() {
         setCoverRevision((current) => current + 1);
       }
       await queryClient.invalidateQueries({ queryKey: ["books"] });
-      setProviderMessage(fields.length === 1 && fields[0] === "cover" ? "Couverture remplacee" : "Metadonnees appliquees");
+      setProviderMessage(
+        fields.length === 1 && fields[0] === "cover"
+          ? "Couverture remplacee"
+          : fields.length === 1 && fields[0] === "association"
+            ? "Association corrigee"
+            : "Metadonnees appliquees"
+      );
     } catch (caught) {
       setProviderError(caught instanceof Error ? caught.message : "Application metadata impossible");
     } finally {
@@ -359,6 +424,10 @@ export function BookDetailPage() {
 
   async function handleProviderCoverApply() {
     await applyProviderFields(["cover"]);
+  }
+
+  async function handleProviderAssociationApply() {
+    await applyProviderFields(["association"]);
   }
 
   async function handleCandidateCoverApply(candidate: MetadataCandidate) {
@@ -512,10 +581,16 @@ export function BookDetailPage() {
                   onChange={(event) => setProviderQuery(event.target.value)}
                 />
               </label>
-              <button className="primary-action" onClick={() => void handleProviderSearch()} disabled={providerBusy}>
-                {providerBusy ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Search size={18} aria-hidden="true" />}
-                Rechercher
-              </button>
+              <div className="metadata-provider-actions">
+                <button className="secondary-action" onClick={() => void handleProviderAutoApply()} disabled={providerBusy}>
+                  {providerBusy ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Sparkles size={18} aria-hidden="true" />}
+                  Auto
+                </button>
+                <button className="primary-action" onClick={() => void handleProviderSearch()} disabled={providerBusy}>
+                  {providerBusy ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Search size={18} aria-hidden="true" />}
+                  Rechercher
+                </button>
+              </div>
             </div>
             {providerError && <p className="notice error">{providerError}</p>}
             {providerMessage && <p className="notice success">{providerMessage}</p>}
@@ -569,6 +644,14 @@ export function BookDetailPage() {
                   <Check size={18} aria-hidden="true" />
                   <h2>Appliquer</h2>
                 </div>
+                <button
+                  className="secondary-action wide"
+                  onClick={() => void handleProviderAssociationApply()}
+                  disabled={providerBusy}
+                >
+                  {providerBusy ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Check size={18} aria-hidden="true" />}
+                  Associer ce resultat
+                </button>
                 {selectedCandidate.cover_url && (
                   <div className="cover-compare">
                     <div>
@@ -652,6 +735,15 @@ export function BookDetailPage() {
               <div>
                 <dt>Langue</dt>
                 <dd>{data.language.toUpperCase()}</dd>
+              </div>
+            )}
+            {data.metadata_source && (
+              <div>
+                <dt>Association</dt>
+                <dd>
+                  {providerLabels[data.metadata_source as MetadataCandidate["provider"]] ?? data.metadata_source}
+                  {data.metadata_provider_id ? ` - ${data.metadata_provider_id}` : ""}
+                </dd>
               </div>
             )}
             {data.isbn && (

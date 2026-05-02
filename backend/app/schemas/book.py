@@ -52,6 +52,7 @@ class BookDetail(BookListItem):
     original_filename: str | None = None
     file_size: int | None = None
     metadata_source: str | None = None
+    metadata_provider_id: str | None = None
     series: BookSeriesInfo | None = None
     related_books: list[BookListItem] = []
     subjects: list[str] = []

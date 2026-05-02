@@ -24,6 +24,7 @@ from app.main import app  # noqa: E402
 from app import models  # noqa: F401, E402
 from app.models.metadata import MetadataProviderResult  # noqa: E402
 from app.models.reading import Bookmark  # noqa: E402
+from app.schemas.metadata import MetadataCandidate  # noqa: E402
 from app.services.metadata_service import MetadataService  # noqa: E402
 
 
@@ -632,6 +633,113 @@ def test_metadata_apply_updates_selected_fields_from_provider_result() -> None:
     assert payload["publisher"] == "Aurelia Press"
     assert payload["published_date"] == "2026-04-26"
     assert payload["metadata_source"] == "googlebooks"
+    assert payload["metadata_provider_id"] == "gb-test"
+
+
+def test_metadata_apply_can_correct_association_without_overwriting_fields() -> None:
+    client = TestClient(app)
+    authenticate_client(client)
+
+    upload = client.post(
+        "/api/v1/books/upload",
+        files={"file": ("metadata-link.epub", make_test_epub(), "application/epub+zip")},
+    )
+    assert upload.status_code == 201
+    book_id = upload.json()["book_id"]
+
+    with SessionLocal() as db:
+        result = MetadataProviderResult(
+            book_id=uuid.UUID(book_id),
+            provider="googlebooks",
+            provider_item_id="gb-link",
+            query="Aurelia provider",
+            raw_json={},
+            normalized_json={
+                "provider": "googlebooks",
+                "provider_item_id": "gb-link",
+                "title": "Do Not Overwrite",
+                "authors": ["Other Author"],
+            },
+            score=Decimal("0.910"),
+        )
+        db.add(result)
+        db.commit()
+        result_id = str(result.id)
+
+    apply = client.post(
+        f"/api/v1/books/{book_id}/metadata/apply",
+        json={"result_id": result_id, "fields": ["association"]},
+    )
+    assert apply.status_code == 200
+    payload = apply.json()
+    assert payload["title"] == "Aurelia Phase Two"
+    assert payload["authors"] == ["Codex Tester"]
+    assert payload["metadata_source"] == "googlebooks"
+    assert payload["metadata_provider_id"] == "gb-link"
+
+
+def test_metadata_auto_applies_high_confidence_candidate(monkeypatch) -> None:
+    client = TestClient(app)
+    authenticate_client(client)
+
+    upload = client.post(
+        "/api/v1/books/upload",
+        files={"file": ("metadata-auto.epub", make_test_epub(), "application/epub+zip")},
+    )
+    assert upload.status_code == 201
+    book_id = upload.json()["book_id"]
+
+    def fake_search_candidates(self, db, book, payload):
+        result = MetadataProviderResult(
+            book_id=book.id,
+            provider="googlebooks",
+            provider_item_id="gb-auto",
+            query=payload.query or book.title,
+            raw_json={},
+            normalized_json={
+                "provider": "googlebooks",
+                "provider_item_id": "gb-auto",
+                "title": "Aurelia Auto Edition",
+                "authors": ["Elian Vale"],
+                "description": "Auto enrichment description.",
+                "language": "fr",
+                "isbn": "9780000000901",
+                "publisher": "Aurelia Press",
+                "published_date": "2026-05-02",
+            },
+            score=Decimal("0.930"),
+        )
+        db.add(result)
+        db.flush()
+        return [
+            MetadataCandidate(
+                id=result.id,
+                provider="googlebooks",
+                provider_item_id="gb-auto",
+                score=0.93,
+                title="Aurelia Auto Edition",
+                authors=["Elian Vale"],
+                description="Auto enrichment description.",
+                language="fr",
+                isbn="9780000000901",
+                publisher="Aurelia Press",
+                published_date="2026-05-02",
+            )
+        ]
+
+    monkeypatch.setattr(MetadataService, "search_candidates", fake_search_candidates)
+
+    auto = client.post(
+        f"/api/v1/books/{book_id}/metadata/auto",
+        json={"fields": ["association", "title", "authors", "description", "language"]},
+    )
+    assert auto.status_code == 200
+    payload = auto.json()
+    assert payload["status"] == "applied"
+    assert payload["applied_fields"] == ["association", "title", "authors", "description", "language"]
+    assert payload["book"]["title"] == "Aurelia Auto Edition"
+    assert payload["book"]["authors"] == ["Elian Vale"]
+    assert payload["book"]["metadata_provider_id"] == "gb-auto"
 
 
 def test_metadata_apply_cover_replaces_file_and_bumps_cover_url(monkeypatch) -> None:

@@ -198,6 +198,7 @@ export type BookDetail = BookListItem & {
   original_filename: string | null;
   file_size: number | null;
   metadata_source: string | null;
+  metadata_provider_id: string | null;
   series: BookSeriesInfo | null;
   related_books: BookListItem[];
   subjects: string[];
@@ -341,6 +342,7 @@ export type TagListResponse = {
 export type MetadataProvider = "openlibrary" | "googlebooks";
 
 export type MetadataApplyField =
+  | "association"
   | "title"
   | "subtitle"
   | "authors"
@@ -371,6 +373,16 @@ export type MetadataCandidate = {
 export type MetadataSearchResponse = {
   items: MetadataCandidate[];
   total: number;
+};
+
+export type MetadataAutoApplyResponse = {
+  status: "applied" | "needs_review" | "no_match";
+  message: string;
+  candidate: MetadataCandidate | null;
+  items: MetadataCandidate[];
+  total: number;
+  applied_fields: MetadataApplyField[];
+  book: BookDetail | null;
 };
 
 export type BookmarkItem = {
@@ -419,6 +431,23 @@ export async function searchBookMetadata(
   payload: { providers?: MetadataProvider[]; query?: string | null; isbn?: string | null }
 ) {
   return apiFetch<MetadataSearchResponse>(`/books/${bookId}/metadata/search`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function autoApplyBookMetadata(
+  bookId: string,
+  payload: {
+    providers?: MetadataProvider[];
+    query?: string | null;
+    isbn?: string | null;
+    fields?: MetadataApplyField[];
+    min_score?: number;
+    review_margin?: number;
+  }
+) {
+  return apiFetch<MetadataAutoApplyResponse>(`/books/${bookId}/metadata/auto`, {
     method: "POST",
     body: JSON.stringify(payload)
   });

@@ -30,7 +30,14 @@ from app.schemas.book import (
     ReadingProgressResponse,
 )
 from app.schemas.imports import UploadBookResponse
-from app.schemas.metadata import MetadataApplyPayload, MetadataSearchPayload, MetadataSearchResponse
+from app.schemas.metadata import (
+    MetadataApplyField,
+    MetadataApplyPayload,
+    MetadataAutoApplyPayload,
+    MetadataAutoApplyResponse,
+    MetadataSearchPayload,
+    MetadataSearchResponse,
+)
 from app.services.epub_service import EpubService, clean_metadata_text
 from app.services.import_service import ImportService
 from app.services.bookmark_service import serialize_bookmark
@@ -106,6 +113,93 @@ def _clean_candidate_text(value: object) -> str | None:
         return None
     return clean_metadata_text(str(value))
 
+
+def _candidate_has_field(candidate: dict[str, object], field: MetadataApplyField) -> bool:
+    if field == "association":
+        return True
+    if field == "authors":
+        authors = candidate.get("authors")
+        return isinstance(authors, list) and any(str(author).strip() for author in authors)
+    if field == "cover":
+        return bool(_clean_candidate_text(candidate.get("cover_url")))
+    return bool(_clean_candidate_text(candidate.get(field)))
+
+
+def _available_metadata_fields(
+    candidate: dict[str, object],
+    requested_fields: list[MetadataApplyField],
+) -> list[MetadataApplyField]:
+    return [field for field in requested_fields if _candidate_has_field(candidate, field)]
+
+
+def _apply_metadata_candidate(
+    db: Session,
+    book: Book,
+    result: MetadataProviderResult,
+    fields: set[MetadataApplyField],
+) -> list[MetadataApplyField]:
+    candidate = result.normalized_json if isinstance(result.normalized_json, dict) else {}
+    applied: list[MetadataApplyField] = []
+
+    if "title" in fields:
+        title = _clean_candidate_text(candidate.get("title"))
+        if title:
+            book.title = title
+            applied.append("title")
+    if "subtitle" in fields:
+        book.subtitle = _clean_candidate_text(candidate.get("subtitle"))
+        applied.append("subtitle")
+    if "authors" in fields:
+        authors = candidate.get("authors") if isinstance(candidate.get("authors"), list) else []
+        if authors:
+            _set_book_authors(db, book, [str(author) for author in authors])
+            applied.append("authors")
+    if "description" in fields:
+        description = clean_metadata_text(_clean_candidate_text(candidate.get("description")))
+        if description:
+            book.description = description
+            applied.append("description")
+    if "language" in fields:
+        language = _clean_candidate_text(candidate.get("language"))
+        if language:
+            book.language = language
+            applied.append("language")
+    if "isbn" in fields:
+        isbn = _clean_candidate_text(candidate.get("isbn"))
+        if isbn:
+            book.isbn = isbn
+            applied.append("isbn")
+    if "publisher" in fields:
+        publisher = _clean_candidate_text(candidate.get("publisher"))
+        if publisher:
+            book.publisher = publisher
+            applied.append("publisher")
+    if "published_date" in fields:
+        published_date = _clean_candidate_text(candidate.get("published_date"))
+        if published_date:
+            book.published_date = published_date
+            applied.append("published_date")
+    if "cover" in fields:
+        cover_url = _clean_candidate_text(candidate.get("cover_url"))
+        if not cover_url:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provider cover not available")
+        cover_bytes = MetadataService(get_settings()).download_cover(cover_url)
+        if not cover_bytes:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Provider cover download failed")
+        cover_path = StorageService(get_settings()).save_cover_jpeg(cover_bytes, book.id)
+        if not cover_path:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Provider cover could not be saved")
+        book.cover_path = str(cover_path)
+        book.updated_at = datetime.now(timezone.utc)
+        applied.append("cover")
+
+    if "association" in fields or applied:
+        book.metadata_source = result.provider
+        book.metadata_provider_id = result.provider_item_id
+        if "association" in fields:
+            applied.insert(0, "association")
+
+    return applied
 
 def _epub_metadata_lists(book: Book) -> tuple[list[str], list[str]]:
     path = Path(book.file_path)
@@ -503,6 +597,78 @@ def search_book_metadata(
     return MetadataSearchResponse(items=candidates, total=len(candidates))
 
 
+@router.post("/{book_id}/metadata/auto", response_model=MetadataAutoApplyResponse)
+def auto_apply_book_metadata(
+    book_id: UUID,
+    payload: MetadataAutoApplyPayload,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> MetadataAutoApplyResponse:
+    book = _get_book_or_404(db, book_id)
+    service = MetadataService(get_settings())
+    search_payload = MetadataSearchPayload(
+        providers=payload.providers,
+        query=payload.query,
+        isbn=payload.isbn,
+    )
+    candidates = service.search_candidates(db, book, search_payload)
+    if not candidates:
+        db.commit()
+        return MetadataAutoApplyResponse(
+            status="no_match",
+            message="Aucune proposition trouvee",
+        )
+
+    best = candidates[0]
+    second = candidates[1] if len(candidates) > 1 else None
+    if best.score < payload.min_score:
+        db.commit()
+        return MetadataAutoApplyResponse(
+            status="needs_review",
+            message=f"Meilleur score trop bas ({round(best.score * 100)}%)",
+            candidate=best,
+            items=candidates,
+            total=len(candidates),
+        )
+    if second and best.score - second.score < payload.review_margin:
+        db.commit()
+        return MetadataAutoApplyResponse(
+            status="needs_review",
+            message="Plusieurs propositions proches, verification conseillee",
+            candidate=best,
+            items=candidates,
+            total=len(candidates),
+        )
+
+    result = db.get(MetadataProviderResult, best.id)
+    if result is None or result.book_id != book.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Metadata result not found")
+    candidate = result.normalized_json if isinstance(result.normalized_json, dict) else {}
+    fields = _available_metadata_fields(candidate, payload.fields)
+    if not fields:
+        db.commit()
+        return MetadataAutoApplyResponse(
+            status="needs_review",
+            message="La proposition ne contient aucun champ applicable",
+            candidate=best,
+            items=candidates,
+            total=len(candidates),
+        )
+
+    applied = _apply_metadata_candidate(db, book, result, set(fields))
+    db.commit()
+    db.refresh(book)
+    return MetadataAutoApplyResponse(
+        status="applied",
+        message=f"Association appliquee automatiquement ({round(best.score * 100)}%)",
+        candidate=best,
+        items=candidates,
+        total=len(candidates),
+        applied_fields=applied,
+        book=get_book(book_id, current_user, db),
+    )
+
+
 @router.post("/{book_id}/metadata/apply", response_model=BookDetail)
 def apply_book_metadata(
     book_id: UUID,
@@ -518,42 +684,7 @@ def apply_book_metadata(
     result = db.get(MetadataProviderResult, payload.result_id)
     if result is None or result.book_id != book.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Metadata result not found")
-    candidate = result.normalized_json if isinstance(result.normalized_json, dict) else {}
-
-    if "title" in fields:
-        title = _clean_candidate_text(candidate.get("title"))
-        if title:
-            book.title = title
-    if "subtitle" in fields:
-        book.subtitle = _clean_candidate_text(candidate.get("subtitle"))
-    if "authors" in fields:
-        authors = candidate.get("authors") if isinstance(candidate.get("authors"), list) else []
-        _set_book_authors(db, book, [str(author) for author in authors])
-    if "description" in fields:
-        book.description = clean_metadata_text(_clean_candidate_text(candidate.get("description")))
-    if "language" in fields:
-        book.language = _clean_candidate_text(candidate.get("language"))
-    if "isbn" in fields:
-        book.isbn = _clean_candidate_text(candidate.get("isbn"))
-    if "publisher" in fields:
-        book.publisher = _clean_candidate_text(candidate.get("publisher"))
-    if "published_date" in fields:
-        book.published_date = _clean_candidate_text(candidate.get("published_date"))
-    if "cover" in fields:
-        cover_url = _clean_candidate_text(candidate.get("cover_url"))
-        if not cover_url:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provider cover not available")
-        cover_bytes = MetadataService(get_settings()).download_cover(cover_url)
-        if not cover_bytes:
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Provider cover download failed")
-        cover_path = StorageService(get_settings()).save_cover_jpeg(cover_bytes, book.id)
-        if not cover_path:
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Provider cover could not be saved")
-        book.cover_path = str(cover_path)
-        book.updated_at = datetime.now(timezone.utc)
-
-    book.metadata_source = result.provider
-    book.metadata_provider_id = result.provider_item_id
+    _apply_metadata_candidate(db, book, result, fields)
     db.commit()
     db.refresh(book)
     return get_book(book_id, current_user, db)
@@ -597,6 +728,7 @@ def get_book(book_id: UUID, current_user: CurrentUser, db: DbSession) -> BookDet
         original_filename=book.original_filename,
         file_size=book.file_size,
         metadata_source=book.metadata_source,
+        metadata_provider_id=book.metadata_provider_id,
         series=series,
         related_books=related_books,
         subjects=subjects,

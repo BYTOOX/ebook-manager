@@ -1156,6 +1156,12 @@ button:disabled {
   gap: 10px;
 }
 
+.metadata-provider-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, auto));
+  gap: 10px;
+}
+
 .metadata-candidate-list,
 .metadata-field-list,
 .metadata-apply-panel {
@@ -1669,5 +1675,9 @@ button:disabled {
   .metadata-provider-search {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
+  }
+
+  .metadata-provider-actions {
+    grid-template-columns: repeat(2, auto);
   }
 }
