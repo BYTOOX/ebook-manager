@@ -112,7 +112,7 @@ class MetadataLibraryAutoApplyPayload(BaseModel):
     )
     min_score: float = Field(default=0.85, ge=0, le=1)
     review_margin: float = Field(default=0.04, ge=0, le=1)
-    only_missing_provider: bool = False
+    only_missing_provider: bool = True
     limit: int | None = Field(default=None, ge=1, le=5000)
 
 
@@ -135,3 +135,14 @@ class MetadataLibraryAutoApplyResponse(BaseModel):
     skipped: int
     errors: int
     items: list[MetadataLibraryAutoApplyItem] = Field(default_factory=list)
+
+
+class MetadataPendingBook(BaseModel):
+    id: UUID
+    title: str
+    authors: list[str] = Field(default_factory=list)
+
+
+class MetadataPendingBooksResponse(BaseModel):
+    items: list[MetadataPendingBook] = Field(default_factory=list)
+    total: int

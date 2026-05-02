@@ -19,11 +19,13 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   apiFetch,
-  autoApplyLibraryMetadata,
+  autoApplyBookMetadata,
+  listPendingMetadataBooks,
   scanIncoming,
   type ImportJobsResponse,
   type MetadataLibraryAutoApplyItem,
   type MetadataLibraryAutoApplyResponse,
+  type MetadataPendingBook,
   type ScanResponse
 } from "../lib/api";
 import { db, type OfflineBook } from "../lib/db";
@@ -45,6 +47,12 @@ type LocalStats = {
   queueFailed: number;
   storageUsed?: number;
   storageQuota?: number;
+};
+
+type MetadataProgress = {
+  index: number;
+  total: number;
+  book: MetadataPendingBook;
 };
 
 function formatBytes(size?: number) {
@@ -160,6 +168,7 @@ export function AdvancedSettingsPage() {
   const [metadataResult, setMetadataResult] = useState<MetadataLibraryAutoApplyResponse | null>(null);
   const [metadataBusy, setMetadataBusy] = useState(false);
   const [metadataError, setMetadataError] = useState<string | null>(null);
+  const [metadataProgress, setMetadataProgress] = useState<MetadataProgress | null>(null);
   const [localBusy, setLocalBusy] = useState(false);
   const [localMessage, setLocalMessage] = useState<string | null>(null);
 
@@ -207,13 +216,67 @@ export function AdvancedSettingsPage() {
     setMetadataBusy(true);
     setMetadataResult(null);
     setMetadataError(null);
+    setMetadataProgress(null);
     try {
-      const result = await autoApplyLibraryMetadata();
-      setMetadataResult(result);
-      await queryClient.invalidateQueries({ queryKey: ["books"] });
+      const pending = await listPendingMetadataBooks();
+      const summary: MetadataLibraryAutoApplyResponse = {
+        scanned: pending.items.length,
+        applied: 0,
+        needs_review: 0,
+        no_match: 0,
+        skipped: Math.max(pending.total - pending.items.length, 0),
+        errors: 0,
+        items: []
+      };
+      setMetadataResult(summary);
+
+      for (const [index, book] of pending.items.entries()) {
+        setMetadataProgress({ index: index + 1, total: pending.total, book });
+        try {
+          const result = await autoApplyBookMetadata(book.id, {});
+          const item: MetadataLibraryAutoApplyItem = {
+            book_id: book.id,
+            title: result.book?.title ?? book.title,
+            status: result.status,
+            message: result.message,
+            candidate_title: result.candidate?.title ?? null,
+            candidate_provider_id: result.candidate?.provider_item_id ?? null,
+            score: result.candidate?.score ?? null,
+            applied_fields: result.applied_fields
+          };
+          if (result.status === "applied") {
+            summary.applied += 1;
+          } else if (result.status === "needs_review") {
+            summary.needs_review += 1;
+          } else {
+            summary.no_match += 1;
+          }
+          summary.items = [item, ...summary.items].slice(0, 12);
+          setMetadataResult({ ...summary });
+        } catch (error) {
+          const item: MetadataLibraryAutoApplyItem = {
+            book_id: book.id,
+            title: book.title,
+            status: "error",
+            message: error instanceof Error ? error.message : "Erreur inconnue",
+            candidate_title: null,
+            candidate_provider_id: null,
+            score: null,
+            applied_fields: []
+          };
+          summary.errors += 1;
+          summary.items = [item, ...summary.items].slice(0, 12);
+          setMetadataResult({ ...summary });
+        }
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["books"] }),
+        queryClient.invalidateQueries({ queryKey: ["organization", "tags"] })
+      ]);
     } catch (error) {
       setMetadataError(error instanceof Error ? error.message : "Enrichissement impossible");
     } finally {
+      setMetadataProgress(null);
       setMetadataBusy(false);
     }
   }
@@ -439,7 +502,9 @@ export function AdvancedSettingsPage() {
           {metadataBusy && (
             <p className="notice pending">
               <Loader2 className="spin" size={16} aria-hidden="true" />
-              Analyse des metadonnees en cours...
+              {metadataProgress
+                ? `Livre ${metadataProgress.index}/${metadataProgress.total} - ${metadataProgress.book.title}`
+                : "Preparation de la liste des livres..."}
             </p>
           )}
           {metadataResult && (

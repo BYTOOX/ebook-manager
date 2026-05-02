@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import Settings
-from app.models.book import Author, Book, BookAuthor, BookSeries
+from app.models.book import Author, Book, BookAuthor, BookSeries, BookTag, Tag
 from app.models.metadata import MetadataProviderResult
 from app.schemas.metadata import (
     MetadataApplyField,
@@ -17,6 +17,8 @@ from app.schemas.metadata import (
     MetadataCandidate,
     MetadataLibraryAutoApplyItem,
     MetadataLibraryAutoApplyResponse,
+    MetadataPendingBook,
+    MetadataPendingBooksResponse,
     MetadataProvider,
     MetadataSearchPayload,
 )
@@ -38,6 +40,8 @@ DEFAULT_AUTO_METADATA_FIELDS: list[MetadataApplyField] = [
     "published_date",
     "cover",
 ]
+METADATA_ENRICHED_TAG = "metadonnees-enrichies"
+METADATA_ENRICHED_TAG_COLOR = "#f5c542"
 
 
 @dataclass
@@ -139,16 +143,20 @@ class MetadataEnrichmentService:
         fields: list[MetadataApplyField] | None = None,
         min_score: float = 0.85,
         review_margin: float = 0.04,
-        only_missing_provider: bool = False,
+        only_missing_provider: bool = True,
         limit: int | None = None,
     ) -> MetadataLibraryAutoApplyResponse:
+        conditions = [Book.deleted_at.is_(None)]
+        if only_missing_provider:
+            conditions.append(Book.metadata_provider_id.is_(None))
+        conditions.append(_book_lacks_enriched_tag())
         query = (
             select(Book)
             .options(
                 selectinload(Book.book_authors).selectinload(BookAuthor.author),
                 selectinload(Book.book_series).selectinload(BookSeries.series),
             )
-            .where(Book.deleted_at.is_(None))
+            .where(*conditions)
             .order_by(Book.added_at.asc())
         )
         if limit is not None:
@@ -215,6 +223,39 @@ class MetadataEnrichmentService:
             items=items,
         )
 
+    def pending_books(
+        self,
+        db: Session,
+        *,
+        limit: int = 5000,
+    ) -> MetadataPendingBooksResponse:
+        conditions = [
+            Book.deleted_at.is_(None),
+            Book.metadata_provider_id.is_(None),
+            _book_lacks_enriched_tag(),
+        ]
+        total = db.scalar(select(func.count()).select_from(Book).where(*conditions)) or 0
+        books = list(
+            db.scalars(
+                select(Book)
+                .options(selectinload(Book.book_authors).selectinload(BookAuthor.author))
+                .where(*conditions)
+                .order_by(Book.added_at.asc())
+                .limit(limit)
+            ).unique()
+        )
+        return MetadataPendingBooksResponse(
+            items=[
+                MetadataPendingBook(
+                    id=book.id,
+                    title=book.title,
+                    authors=[link.author.name for link in book.book_authors if link.author],
+                )
+                for book in books
+            ],
+            total=total,
+        )
+
     def apply_metadata_candidate(
         self,
         db: Session,
@@ -278,6 +319,7 @@ class MetadataEnrichmentService:
             book.metadata_provider_id = result.provider_item_id
             if "association" in fields:
                 applied.insert(0, "association")
+            mark_book_metadata_enriched(db, book)
 
         return applied
 
@@ -360,3 +402,25 @@ def _set_book_authors(db: Session, book: Book, author_names: list[str]) -> None:
             db.add(author)
             db.flush()
         book.book_authors.append(BookAuthor(author=author, position=position))
+
+
+def _book_lacks_enriched_tag():
+    return ~Book.book_tags.any(
+        BookTag.tag.has(func.lower(Tag.name) == METADATA_ENRICHED_TAG.lower())
+    )
+
+
+def mark_book_metadata_enriched(db: Session, book: Book) -> None:
+    if any(
+        link.tag and link.tag.name.casefold() == METADATA_ENRICHED_TAG.casefold()
+        for link in book.book_tags
+    ):
+        return
+
+    tag = db.scalar(select(Tag).where(func.lower(Tag.name) == METADATA_ENRICHED_TAG.lower()))
+    if tag is None:
+        tag = Tag(name=METADATA_ENRICHED_TAG, color=METADATA_ENRICHED_TAG_COLOR)
+        db.add(tag)
+        db.flush()
+
+    book.book_tags.append(BookTag(tag=tag))

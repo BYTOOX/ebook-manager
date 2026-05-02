@@ -635,6 +635,7 @@ def test_metadata_apply_updates_selected_fields_from_provider_result() -> None:
     assert payload["published_date"] == "2026-04-26"
     assert payload["metadata_source"] == "googlebooks"
     assert payload["metadata_provider_id"] == "gb-test"
+    assert "metadonnees-enrichies" in payload["tags"]
 
 
 def test_metadata_apply_can_correct_association_without_overwriting_fields() -> None:
@@ -677,6 +678,7 @@ def test_metadata_apply_can_correct_association_without_overwriting_fields() -> 
     assert payload["authors"] == ["Codex Tester"]
     assert payload["metadata_source"] == "googlebooks"
     assert payload["metadata_provider_id"] == "gb-link"
+    assert "metadonnees-enrichies" in payload["tags"]
 
 
 def test_metadata_auto_applies_high_confidence_candidate(monkeypatch) -> None:
@@ -741,6 +743,11 @@ def test_metadata_auto_applies_high_confidence_candidate(monkeypatch) -> None:
     assert payload["book"]["title"] == "Aurelia Auto Edition"
     assert payload["book"]["authors"] == ["Elian Vale"]
     assert payload["book"]["metadata_provider_id"] == "gb-auto"
+    assert "metadonnees-enrichies" in payload["book"]["tags"]
+
+    pending = client.get("/api/v1/books/metadata/pending")
+    assert pending.status_code == 200
+    assert pending.json() == {"items": [], "total": 0}
 
 
 def test_metadata_batch_auto_applies_library(monkeypatch) -> None:
@@ -822,6 +829,51 @@ def test_metadata_batch_auto_applies_library(monkeypatch) -> None:
         "Batch Two Enrichi",
     ]
 
+    pending = client.get("/api/v1/books/metadata/pending")
+    assert pending.status_code == 200
+    assert pending.json() == {"items": [], "total": 0}
+
+
+def test_metadata_pending_books_lists_only_not_enriched() -> None:
+    client = TestClient(app)
+    authenticate_client(client)
+
+    raw = client.post(
+        "/api/v1/books/upload",
+        files={
+            "file": (
+                "raw-pending.epub",
+                make_test_epub("Raw Pending", "9780000000931"),
+                "application/epub+zip",
+            )
+        },
+    )
+    linked = client.post(
+        "/api/v1/books/upload",
+        files={
+            "file": (
+                "linked-pending.epub",
+                make_test_epub("Linked Pending", "9780000000932"),
+                "application/epub+zip",
+            )
+        },
+    )
+    assert raw.status_code == 201
+    assert linked.status_code == 201
+
+    with SessionLocal() as db:
+        book = db.get(models.Book, uuid.UUID(linked.json()["book_id"]))
+        assert book is not None
+        book.metadata_source = "googlebooks"
+        book.metadata_provider_id = "gb-linked"
+        db.commit()
+
+    pending = client.get("/api/v1/books/metadata/pending")
+    assert pending.status_code == 200
+    payload = pending.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["title"] == "Raw Pending"
+
 
 def test_upload_auto_enriches_imported_book_when_enabled(monkeypatch) -> None:
     client = TestClient(app)
@@ -881,6 +933,7 @@ def test_upload_auto_enriches_imported_book_when_enabled(monkeypatch) -> None:
     assert payload["title"] == "Import Auto Edition"
     assert payload["authors"] == ["Elian Vale"]
     assert payload["metadata_provider_id"] == "gb-import-auto"
+    assert "metadonnees-enrichies" in payload["tags"]
 
 
 def test_metadata_apply_cover_replaces_file_and_bumps_cover_url(monkeypatch) -> None:

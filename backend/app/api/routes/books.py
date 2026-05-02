@@ -37,13 +37,18 @@ from app.schemas.metadata import (
     MetadataAutoApplyResponse,
     MetadataLibraryAutoApplyPayload,
     MetadataLibraryAutoApplyResponse,
+    MetadataPendingBooksResponse,
     MetadataSearchPayload,
     MetadataSearchResponse,
 )
 from app.services.epub_service import EpubService, clean_metadata_text
 from app.services.import_service import ImportService
 from app.services.bookmark_service import serialize_bookmark
-from app.services.metadata_enrichment_service import MetadataEnrichmentService, auto_result_to_response
+from app.services.metadata_enrichment_service import (
+    MetadataEnrichmentService,
+    auto_result_to_response,
+    mark_book_metadata_enriched,
+)
 from app.services.metadata_service import MetadataService
 from app.services.progress_service import apply_reading_progress, serialize_progress
 from app.services.storage_service import StorageService
@@ -600,6 +605,16 @@ def auto_apply_library_metadata(
     )
 
 
+@router.get("/metadata/pending", response_model=MetadataPendingBooksResponse)
+def list_pending_metadata_books(
+    current_user: CurrentUser,
+    db: DbSession,
+    limit: int = Query(default=5000, ge=1, le=5000),
+) -> MetadataPendingBooksResponse:
+    del current_user
+    return MetadataEnrichmentService(get_settings()).pending_books(db, limit=limit)
+
+
 @router.post("/{book_id}/metadata/auto", response_model=MetadataAutoApplyResponse)
 def auto_apply_book_metadata(
     book_id: UUID,
@@ -641,6 +656,7 @@ def apply_book_metadata(
     if result is None or result.book_id != book.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Metadata result not found")
     _apply_metadata_candidate(db, book, result, fields)
+    mark_book_metadata_enriched(db, book)
     db.commit()
     db.refresh(book)
     return get_book(book_id, current_user, db)

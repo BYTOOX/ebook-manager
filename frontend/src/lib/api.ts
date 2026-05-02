@@ -406,6 +406,17 @@ export type MetadataLibraryAutoApplyResponse = {
   items: MetadataLibraryAutoApplyItem[];
 };
 
+export type MetadataPendingBook = {
+  id: string;
+  title: string;
+  authors: string[];
+};
+
+export type MetadataPendingBooksResponse = {
+  items: MetadataPendingBook[];
+  total: number;
+};
+
 export type BookmarkItem = {
   id: string;
   book_id: string;
@@ -488,6 +499,10 @@ export async function autoApplyLibraryMetadata(
     method: "POST",
     body: JSON.stringify(payload)
   });
+}
+
+export async function listPendingMetadataBooks(limit = 5000) {
+  return apiFetch<MetadataPendingBooksResponse>(`/books/metadata/pending?limit=${limit}`);
 }
 
 export async function applyBookMetadata(bookId: string, resultId: string, fields: MetadataApplyField[]) {
