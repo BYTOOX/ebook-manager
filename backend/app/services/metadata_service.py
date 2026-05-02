@@ -26,6 +26,7 @@ class SearchContext:
     query: str
     title: str
     title_core: str
+    title_search: str
     authors: list[str]
     series_name: str | None
     series_index: float | None
@@ -234,11 +235,14 @@ class MetadataService:
         series_name, series_index = _series_from_book(book)
         title = book.title.strip()
         title_core = _title_core(title)
-        fallback_query = " ".join(part for part in [title, " ".join(authors)] if part).strip()
+        title_search = _search_title(title_core or title)
+        fallback_title = title_search or title_core or title
+        fallback_query = " ".join(part for part in [fallback_title, " ".join(authors)] if part).strip()
         return SearchContext(
             query=clean_query or fallback_query,
             title=title,
             title_core=title_core,
+            title_search=title_search,
             authors=authors,
             series_name=series_name,
             series_index=series_index,
@@ -247,7 +251,8 @@ class MetadataService:
 
     def _google_queries(self, context: SearchContext) -> list[str]:
         title = context.title
-        core = context.title_core or title
+        core = context.title_search or context.title_core or title
+        title_variants = _dedupe_text([context.title_search, context.title_core, title])
         author_text = " ".join(context.authors)
         primary_author = context.authors[0] if context.authors else ""
         series = context.series_name
@@ -265,6 +270,8 @@ class MetadataService:
             add(series, index, core, author_text)
         if series:
             add(series, core, author_text)
+            for variant in title_variants[1:3]:
+                add(series, variant, author_text)
             if context.query and not _contains_normalized(context.query, series):
                 query_author = (
                     None
@@ -276,9 +283,8 @@ class MetadataService:
         add(context.query)
         if author_text and not _contains_normalized(context.query, author_text):
             add(context.query, author_text)
-        if core != title:
-            add(title, author_text)
-        add(core, author_text)
+        for variant in title_variants:
+            add(variant, author_text)
         if core and primary_author:
             add(f'intitle:"{core}"', f'inauthor:"{primary_author}"')
 
@@ -301,12 +307,15 @@ class MetadataService:
         candidate_subtitle = _string_or_none(candidate.get("subtitle"))
         candidate_heading = " ".join(part for part in [candidate_title, candidate_subtitle] if part)
         candidate_core = _title_core(candidate_heading)
-        title_score = max(
-            _ratio(context.title, candidate_heading),
-            _ratio(context.title_core, candidate_heading),
-            _ratio(context.title_core, candidate_core),
+        title_score, exact_title, contained_title = _title_match_score(
+            [context.title, context.title_core, context.title_search],
+            [candidate_heading, candidate_core, _search_title(candidate_core or candidate_heading)],
         )
-        score += 0.35 * title_score
+        score += 0.43 * title_score
+        if exact_title:
+            score += 0.21
+        elif contained_title:
+            score += 0.14
         score += 0.15 * _author_score(
             [link.author.name for link in book.book_authors],
             candidate.get("authors") if isinstance(candidate.get("authors"), list) else [],
@@ -403,11 +412,11 @@ def _dedupe_candidates(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return deduped
 
 
-def _dedupe_text(values: list[str]) -> list[str]:
+def _dedupe_text(values: list[str | None]) -> list[str]:
     deduped: list[str] = []
     seen: set[str] = set()
     for value in values:
-        text = re.sub(r"\s+", " ", value).strip()
+        text = re.sub(r"\s+", " ", value or "").strip()
         if not text:
             continue
         key = _normal(text)
@@ -510,6 +519,7 @@ def _title_core(title: str | None) -> str:
     patterns = [
         r"^\s*[\[(]?\s*(?:tome|vol(?:ume)?|livre|mission|t)\s*0*[0-9]{1,3}\s*[\])]?[\s\-:_.]*",
         r"^\s*0*[0-9]{1,3}\s*[\-:_.]\s*",
+        r"^\s*[^\W\d_][\w'’ -]{2,}?\s+0*[0-9]{1,3}\s*[\-:_.]\s*",
         (
             r"^\s*[^-:]+?\s*[\[(]\s*(?:tome|vol(?:ume)?|livre|mission|t)"
             r"\s*0*[0-9]{1,3}\s*[\])]\s*[\-:_.]*"
@@ -517,7 +527,88 @@ def _title_core(title: str | None) -> str:
     ]
     for pattern in patterns:
         text = re.sub(pattern, "", text, flags=re.IGNORECASE).strip()
+    text = _search_title(text)
     return text or (title or "").strip()
+
+
+def _search_title(title: str | None) -> str:
+    text = re.sub(r"\s+", " ", title or "").strip()
+    if not text:
+        return ""
+
+    while True:
+        without_suffix = re.sub(r"\s*[\[(][^\])\[]+[\])]\s*$", "", text).strip()
+        if without_suffix == text or not _is_significant_title(without_suffix):
+            break
+        text = without_suffix
+
+    edition_suffix = re.sub(
+        r"\s*[-_:]\s*(?:edition|ed\.?|collector|collectors?|illustree|speciale|"
+        r"version|vf|french|francais|epub|ebook|retail)\b.*$",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip()
+    if edition_suffix != text and _is_significant_title(edition_suffix):
+        text = edition_suffix
+
+    return text
+
+
+def _title_match_score(
+    book_titles: list[str | None],
+    candidate_titles: list[str | None],
+) -> tuple[float, bool, bool]:
+    book_variants = _title_variants(book_titles)
+    candidate_variants = _title_variants(candidate_titles)
+    if not book_variants or not candidate_variants:
+        return 0.0, False, False
+
+    score = max(
+        _ratio(book_title, candidate_title)
+        for book_title in book_variants
+        for candidate_title in candidate_variants
+    )
+    exact = False
+    contained = False
+
+    for book_title in book_variants:
+        normal_book = _normal(book_title)
+        if not _is_significant_title(book_title):
+            continue
+        for candidate_title in candidate_variants:
+            normal_candidate = _normal(candidate_title)
+            if not normal_candidate:
+                continue
+            if normal_book == normal_candidate:
+                exact = True
+            elif normal_book in normal_candidate or normal_candidate in normal_book:
+                contained = True
+
+    if exact:
+        score = 1.0
+    elif contained:
+        score = max(score, 0.94)
+
+    return score, exact, contained
+
+
+def _title_variants(values: list[str | None]) -> list[str]:
+    variants: list[str | None] = []
+    for value in values:
+        text = _string_or_none(value)
+        if not text:
+            continue
+        variants.append(text)
+        search_title = _search_title(text)
+        if search_title != text:
+            variants.append(search_title)
+    return _dedupe_text(variants)
+
+
+def _is_significant_title(value: str | None) -> bool:
+    normal = _normal(value)
+    return len(normal) >= 12 and len(normal.split()) >= 3
 
 
 def _volume_candidates(text: str | None) -> set[int]:
