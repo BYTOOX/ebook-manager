@@ -219,7 +219,16 @@ class AureliaApi(
         }.getOrDefault(false)
     }
 
-    suspend fun putBookProgress(bookId: String, payloadJson: String): Boolean = withContext(Dispatchers.IO) {
+    suspend fun getBookProgress(bookId: String): ReadingProgressDto = withContext(Dispatchers.IO) {
+        executeJson(
+            Request.Builder()
+                .url(url("books/$bookId/progress"))
+                .get()
+                .build()
+        ).toReadingProgress()
+    }
+
+    suspend fun putBookProgress(bookId: String, payloadJson: String): ReadingProgressResponseDto = withContext(Dispatchers.IO) {
         val body = JSONObject(payloadJson)
             .toString()
             .toRequestBody(jsonMediaType)
@@ -231,7 +240,11 @@ class AureliaApi(
                 .build()
         )
 
-        json.optBoolean("ok", true)
+        ReadingProgressResponseDto(
+            ok = json.optBoolean("ok", true),
+            resolved = json.optNullableString("resolved"),
+            progress = json.optJSONObject("progress")?.toReadingProgress()
+        )
     }
 
     suspend fun syncEvents(deviceId: String, events: List<SyncEventUploadDto>): SyncEventsResponseDto =
@@ -427,12 +440,25 @@ class AureliaApi(
                             status = json.optString("status"),
                             resolved = json.optNullableString("resolved"),
                             bookId = json.optNullableString("book_id"),
+                            progress = json.optJSONObject("progress")?.toReadingProgress(),
                             error = json.optNullableString("error")
                         )
                     )
                 }
             }
         }
+    }
+
+    private fun JSONObject.toReadingProgress(): ReadingProgressDto {
+        return ReadingProgressDto(
+            cfi = optNullableString("cfi"),
+            progressPercent = optNullableFloat("progress_percent"),
+            chapterLabel = optNullableString("chapter_label"),
+            chapterHref = optNullableString("chapter_href"),
+            locationJson = optJSONObject("location_json")?.toString(),
+            deviceId = optNullableString("device_id"),
+            updatedAt = optNullableString("updated_at")
+        )
     }
 
     private fun JSONObject.optNullableString(name: String): String? {

@@ -11,6 +11,7 @@ import ch.bytoox.aureliareader.core.network.AuthSession
 import ch.bytoox.aureliareader.core.network.BookDetailDto
 import ch.bytoox.aureliareader.core.network.BookListItemDto
 import ch.bytoox.aureliareader.core.network.BookUpdateDto
+import ch.bytoox.aureliareader.core.network.ReadingProgressDto
 import ch.bytoox.aureliareader.core.network.CollectionSummaryDto
 import ch.bytoox.aureliareader.core.network.SeriesDetailDto
 import ch.bytoox.aureliareader.core.network.SeriesSummaryDto
@@ -29,6 +30,7 @@ import ch.bytoox.aureliareader.data.repositories.ProgressRepository
 import ch.bytoox.aureliareader.data.sync.ProgressSyncScheduler
 import java.io.IOException
 import java.time.Instant
+import java.time.OffsetDateTime
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -482,15 +484,19 @@ class AppViewModel(
             runCatching {
                 val book = loadBookDetailForAction(bookId)
                     ?: error("Livre indisponible.")
+                hydrateProgressBeforeReading(book.id)
                 val filePath = downloadRepository.prepareBookForReading(uiState.value.serverUrl, book) { progress ->
                     _uiState.update { state -> state.copy(readerPrepareProgress = progress.coerceIn(0, 100)) }
                 }
                 book to filePath
             }.onSuccess { (book, filePath) ->
+                val progress = loadLocalProgress()
                 _uiState.update {
                     it.copy(
+                        localProgress = progress,
                         selectedBookId = book.id,
-                        selectedBook = book.withLocalProgress(it.localProgress),
+                        selectedBook = book.withLocalProgress(progress),
+                        books = it.books.withLocalProgress(progress),
                         isPreparingReader = false,
                         readerPrepareProgress = null,
                         readerError = null,
@@ -885,14 +891,19 @@ class AppViewModel(
             }
 
             runCatching {
+                hydrateProgressBeforeReading(book.id)
                 downloadRepository.prepareBookForReading(serverUrl, book) { progress ->
                     _uiState.update {
                         it.copy(readerPrepareProgress = progress.coerceIn(0, 100))
                     }
                 }
             }.onSuccess { filePath ->
+                val progress = loadLocalProgress()
                 _uiState.update {
                     it.copy(
+                        localProgress = progress,
+                        selectedBook = it.selectedBook?.withLocalProgress(progress),
+                        books = it.books.withLocalProgress(progress),
                         isPreparingReader = false,
                         readerPrepareProgress = null,
                         readerError = null,
@@ -1300,6 +1311,43 @@ class AppViewModel(
         return runCatching { progressRepository.allProgress() }.getOrDefault(uiState.value.localProgress)
     }
 
+    private suspend fun hydrateProgressBeforeReading(bookId: String) {
+        val state = uiState.value
+        if (state.isOfflineMode || state.serverUrl.isBlank() || state.accessToken.isBlank()) {
+            return
+        }
+
+        val localProgress = progressRepository.progressForBook(bookId)
+        if (localProgress?.dirty == true || localProgress?.syncStatus == "pending") {
+            return
+        }
+
+        val serverProgress = runCatching {
+            libraryRepository.getBookProgress(state.serverUrl, bookId)
+        }.getOrElse { error ->
+            handleApiFailure(error)
+            return
+        }
+        if (!serverProgress.hasProgressValue()) {
+            return
+        }
+
+        val serverUpdatedAt = serverProgress.updatedAt.toEpochMillisOrNull()
+        val shouldSeed = localProgress == null ||
+            (serverUpdatedAt != null && serverUpdatedAt > localProgress.updatedAt)
+        if (!shouldSeed) {
+            return
+        }
+
+        progressRepository.seedServerProgress(
+            bookId = bookId,
+            locatorJson = serverProgress.locationJson,
+            progressPercent = serverProgress.progressPercent,
+            chapterLabel = serverProgress.chapterLabel,
+            updatedAt = serverUpdatedAt ?: System.currentTimeMillis()
+        )
+    }
+
     private fun setDownloadState(bookId: String, state: BookDownloadUiState) {
         _uiState.update {
             it.copy(downloadStates = it.downloadStates + (bookId to state))
@@ -1425,6 +1473,19 @@ private fun BookDetailDto.withLocalProgress(
     progress: Map<String, BookProgressSnapshot>
 ): BookDetailDto {
     return progress[id]?.let { copy(progressPercent = it.progressPercent) } ?: this
+}
+
+private fun ReadingProgressDto.hasProgressValue(): Boolean {
+    return locationJson != null || cfi != null || progressPercent != null
+}
+
+private fun String?.toEpochMillisOrNull(): Long? {
+    val value = this?.trim().orEmpty()
+    if (value.isBlank()) {
+        return null
+    }
+    return runCatching { Instant.parse(value).toEpochMilli() }.getOrNull()
+        ?: runCatching { OffsetDateTime.parse(value).toInstant().toEpochMilli() }.getOrNull()
 }
 
 private fun ContentResolver.displayName(uri: Uri): String? {

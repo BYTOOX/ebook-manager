@@ -5,6 +5,7 @@ import ch.bytoox.aureliareader.core.network.BookDetailDto
 import ch.bytoox.aureliareader.core.network.BookListResponseDto
 import ch.bytoox.aureliareader.core.network.BookUpdateDto
 import ch.bytoox.aureliareader.core.network.CollectionListResponseDto
+import ch.bytoox.aureliareader.core.network.ReadingProgressDto
 import ch.bytoox.aureliareader.core.network.SeriesDetailDto
 import ch.bytoox.aureliareader.core.network.SeriesListResponseDto
 import ch.bytoox.aureliareader.core.network.UploadBookResponseDto
@@ -54,6 +55,10 @@ class LibraryRepository(
     }
 
     suspend fun putBookProgress(serverUrl: String, bookId: String, payloadJson: String): Boolean {
-        return apiClient.create(serverUrl).putBookProgress(bookId, payloadJson)
+        return apiClient.create(serverUrl).putBookProgress(bookId, payloadJson).ok
+    }
+
+    suspend fun getBookProgress(serverUrl: String, bookId: String): ReadingProgressDto {
+        return apiClient.create(serverUrl).getBookProgress(bookId)
     }
 }

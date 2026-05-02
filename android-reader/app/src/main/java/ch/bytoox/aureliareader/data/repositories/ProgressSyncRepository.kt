@@ -2,6 +2,7 @@ package ch.bytoox.aureliareader.data.repositories
 
 import ch.bytoox.aureliareader.core.network.ApiClient
 import ch.bytoox.aureliareader.core.network.ApiException
+import ch.bytoox.aureliareader.core.network.ReadingProgressDto
 import ch.bytoox.aureliareader.core.network.SyncEventResultDto
 import ch.bytoox.aureliareader.core.network.SyncEventUploadDto
 import ch.bytoox.aureliareader.data.local.dao.ProgressDao
@@ -9,6 +10,7 @@ import ch.bytoox.aureliareader.data.local.dao.SyncEventDao
 import ch.bytoox.aureliareader.data.local.entities.SyncEventEntity
 import java.io.IOException
 import java.time.Instant
+import java.time.OffsetDateTime
 
 data class ProgressSyncSummary(
     val attempted: Int,
@@ -21,6 +23,8 @@ class ProgressSyncRepository(
     private val progressDao: ProgressDao,
     private val syncEventDao: SyncEventDao
 ) {
+    private val progressRepository = ProgressRepository(progressDao, syncEventDao)
+
     suspend fun flushPending(serverUrl: String): ProgressSyncSummary {
         val events = syncEventDao.pending(limit = MAX_BATCH_SIZE)
         if (events.isEmpty()) {
@@ -40,9 +44,13 @@ class ProgressSyncRepository(
         event: SyncEventEntity
     ): ProgressSyncSummary {
         return try {
-            val ok = api.putBookProgress(event.bookId, event.payloadJson)
-            if (ok) {
-                markSynced(event.bookId)
+            val response = api.putBookProgress(event.bookId, event.payloadJson)
+            if (response.ok) {
+                markResolvedProgress(
+                    bookId = event.bookId,
+                    resolved = response.resolved,
+                    progress = response.progress
+                )
                 ProgressSyncSummary(attempted = 1, synced = 1, failed = 0)
             } else {
                 markFailed(event.bookId, "Progression refusee par le serveur.")
@@ -76,7 +84,11 @@ class ProgressSyncRepository(
             events.forEach { event ->
                 val result = resultsById[event.eventId]
                 if (result?.status == "processed") {
-                    markSynced(event.bookId)
+                    markResolvedProgress(
+                        bookId = event.bookId,
+                        resolved = result.resolved,
+                        progress = result.progress
+                    )
                     synced += 1
                 } else {
                     val message = result?.error ?: "Evenement non traite par le serveur."
@@ -115,6 +127,28 @@ class ProgressSyncRepository(
         syncEventDao.deleteForBook(bookId)
     }
 
+    private suspend fun markResolvedProgress(
+        bookId: String,
+        resolved: String?,
+        progress: ReadingProgressDto?
+    ) {
+        if (resolved == "server_won" && progress != null) {
+            val now = System.currentTimeMillis()
+            progressRepository.seedServerProgress(
+                bookId = bookId,
+                locatorJson = progress.locationJson,
+                progressPercent = progress.progressPercent,
+                chapterLabel = progress.chapterLabel,
+                updatedAt = progress.updatedAt.toEpochMillisOrNull() ?: now,
+                syncedAt = now
+            )
+            syncEventDao.deleteForBook(bookId)
+            return
+        }
+
+        markSynced(bookId)
+    }
+
     private suspend fun markFailed(bookId: String, message: String) {
         val now = System.currentTimeMillis()
         syncEventDao.markFailed(bookId, message, now)
@@ -130,6 +164,15 @@ class ProgressSyncRepository(
 
     private fun Throwable.isRetryableServerError(): Boolean {
         return this is ApiException && statusCode >= 500
+    }
+
+    private fun String?.toEpochMillisOrNull(): Long? {
+        val value = this?.trim().orEmpty()
+        if (value.isBlank()) {
+            return null
+        }
+        return runCatching { Instant.parse(value).toEpochMilli() }.getOrNull()
+            ?: runCatching { OffsetDateTime.parse(value).toInstant().toEpochMilli() }.getOrNull()
     }
 
     private companion object {

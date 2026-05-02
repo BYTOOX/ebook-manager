@@ -77,6 +77,36 @@ class ProgressRepository(
         )
     }
 
+    suspend fun seedServerProgress(
+        bookId: String,
+        locatorJson: String?,
+        progressPercent: Float?,
+        chapterLabel: String?,
+        updatedAt: Long,
+        syncedAt: Long = System.currentTimeMillis()
+    ) {
+        val currentProgress = progressDao.progressByBookId(bookId)
+        val normalizedProgress = (progressPercent ?: currentProgress?.progressPercent ?: 0f).normalizedProgress()
+        val safeLocatorJson = locatorJson
+            ?.takeIf { it.isNotBlank() }
+            ?: currentProgress?.locatorJson
+            ?: "{}"
+
+        progressDao.upsert(
+            ProgressEntity(
+                bookId = bookId,
+                locatorJson = safeLocatorJson,
+                progressPercent = normalizedProgress,
+                chapterLabel = chapterLabel ?: currentProgress?.chapterLabel,
+                updatedAt = updatedAt,
+                dirty = false,
+                syncStatus = "synced",
+                lastSyncedAt = syncedAt,
+                syncError = null
+            )
+        )
+    }
+
     private fun ProgressEntity.toSnapshot(): BookProgressSnapshot {
         return BookProgressSnapshot(
             locatorJson = locatorJson,

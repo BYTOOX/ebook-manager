@@ -139,12 +139,29 @@ data class SyncEventUploadDto(
     val clientCreatedAt: String
 )
 
+data class ReadingProgressDto(
+    val cfi: String?,
+    val progressPercent: Float?,
+    val chapterLabel: String?,
+    val chapterHref: String?,
+    val locationJson: String?,
+    val deviceId: String?,
+    val updatedAt: String?
+)
+
+data class ReadingProgressResponseDto(
+    val ok: Boolean,
+    val resolved: String?,
+    val progress: ReadingProgressDto?
+)
+
 data class SyncEventResultDto(
     val eventId: String,
     val type: String,
     val status: String,
     val resolved: String?,
     val bookId: String?,
+    val progress: ReadingProgressDto?,
     val error: String?
 )
 

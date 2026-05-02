@@ -58,6 +58,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -106,6 +107,7 @@ class ReadiumReaderActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         supportFragmentManager.fragmentFactory = EpubNavigatorFragment.createDummyFactory()
         super.onCreate(savedInstanceState)
+        removeRestoredNavigatorIfNeeded(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         configureSystemBars()
         useSystemBrightness()
@@ -176,6 +178,20 @@ class ReadiumReaderActivity : FragmentActivity() {
             .commitAllowingStateLoss()
     }
 
+    private fun removeRestoredNavigatorIfNeeded(savedInstanceState: Bundle?) {
+        if (savedInstanceState == null) {
+            return
+        }
+        val restoredNavigators = supportFragmentManager.fragments
+            .filterIsInstance<EpubNavigatorFragment>()
+        if (restoredNavigators.isEmpty()) {
+            return
+        }
+        supportFragmentManager.commitNow(allowStateLoss = true) {
+            restoredNavigators.forEach { fragment -> remove(fragment) }
+        }
+    }
+
     internal fun navigator(): EpubNavigatorFragment? {
         return supportFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? EpubNavigatorFragment
     }
@@ -194,6 +210,11 @@ class ReadiumReaderActivity : FragmentActivity() {
         return progressRepository.progressForBook(bookId)
             ?.locatorJson
             ?.let { json -> runCatching { Locator.fromJSON(JSONObject(json)) }.getOrNull() }
+    }
+
+    internal suspend fun loadInitialProgressPercent(): Float {
+        val bookId = activeBookId.takeIf { it.isNotBlank() } ?: return 0f
+        return progressRepository.progressForBook(bookId)?.progressPercent ?: 0f
     }
 
     internal suspend fun saveLocator(locator: Locator, chapterLabel: String?) {
@@ -276,6 +297,7 @@ private fun ReadiumReaderScreen(
     val activity = LocalContext.current as ReadiumReaderActivity
     val publicationFactory = remember { ReadiumPublicationFactory(activity.applicationContext) }
     val preferencesStore = remember { ReaderPreferencesStore(activity.applicationContext) }
+    val coroutineScope = rememberCoroutineScope()
     val containerId = remember { View.generateViewId() }
     var readerPreferences by remember { mutableStateOf(preferencesStore.load()) }
     var overlayVisible by rememberSaveable { mutableStateOf(false) }
@@ -341,7 +363,21 @@ private fun ReadiumReaderScreen(
             val initialLocator = withContext(Dispatchers.IO) {
                 activity.loadInitialLocator()
             }
+            val initialStoredProgress = withContext(Dispatchers.IO) {
+                activity.loadInitialProgressPercent()
+            }
             tocItems = flattenToc(session.publication.tableOfContents)
+            val initialDisplayProgress = initialLocator?.progressPercent()
+                ?.takeIf { it > 0f }
+                ?: initialStoredProgress
+            if (initialDisplayProgress > 0f) {
+                progressLabel = "${initialDisplayProgress.roundToInt()}%"
+            }
+            initialLocator?.let { locator ->
+                chapterLabel = locator.title?.takeIf { it.isNotBlank() }
+                    ?: matchingChapterTitle(tocItems, locator.href.toString())
+                    ?: chapterLabel
+            }
             val fragmentFactory = session.navigatorFactory.createFragmentFactory(
                 initialLocator = initialLocator,
                 initialPreferences = readerPreferences.toEpubPreferences()
@@ -370,8 +406,17 @@ private fun ReadiumReaderScreen(
             }
             isLoading = false
 
+            val initialProgress = maxOf(initialLocator?.progressPercent() ?: 0f, initialStoredProgress)
+            var hasSeenLocator = false
             activity.navigator()?.currentLocator?.collect { locator ->
-                val percent = locator.progressPercent().roundToInt()
+                val percentValue = locator.progressPercent()
+                val shouldSkipInitialZero = !hasSeenLocator && initialProgress > 0.5f && percentValue <= 0.5f
+                hasSeenLocator = true
+                if (shouldSkipInitialZero) {
+                    return@collect
+                }
+
+                val percent = percentValue.roundToInt()
                 progressLabel = "$percent%"
                 val currentChapter = locator.title?.takeIf { it.isNotBlank() }
                     ?: matchingChapterTitle(tocItems, locator.href.toString())
@@ -409,7 +454,9 @@ private fun ReadiumReaderScreen(
                     )
                 }
             },
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
         )
 
         ReaderBrightnessLayer(brightness = readerPreferences.brightness)
@@ -451,6 +498,13 @@ private fun ReadiumReaderScreen(
                     activity.navigator()?.go(item.link, animated = true)
                     chaptersVisible = false
                     overlayVisible = false
+                    settingsVisible = false
+                    lastThemePatchHref = null
+                    coroutineScope.launch {
+                        delay(180)
+                        activity.navigator()?.submitPreferences(readerPreferences.toEpubPreferences())
+                        isContentThemed = activity.applyContentTheme(readerPreferences)
+                    }
                 },
                 onDismiss = { chaptersVisible = false }
             )
