@@ -372,6 +372,12 @@ export function AdvancedSettingsPage() {
             {scanBusy ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <RefreshCw size={18} aria-hidden="true" />}
             Scanner incoming
           </button>
+          {scanBusy && (
+            <p className="notice pending">
+              <Loader2 className="spin" size={16} aria-hidden="true" />
+              Scan incoming en cours...
+            </p>
+          )}
           {scanResult && (
             <div className="stat-grid">
               <div>
@@ -430,6 +436,12 @@ export function AdvancedSettingsPage() {
             )}
             Enrichir toute la bibliotheque
           </button>
+          {metadataBusy && (
+            <p className="notice pending">
+              <Loader2 className="spin" size={16} aria-hidden="true" />
+              Analyse des metadonnees en cours...
+            </p>
+          )}
           {metadataResult && (
             <div className="stat-grid">
               <div>

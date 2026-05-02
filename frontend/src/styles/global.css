@@ -712,6 +712,12 @@ button:disabled {
   color: var(--color-success);
 }
 
+.notice.pending {
+  border: 1px solid rgba(245, 197, 66, 0.25);
+  background: rgba(245, 197, 66, 0.08);
+  color: var(--color-accent);
+}
+
 .notice.error {
   border: 1px solid rgba(255, 92, 92, 0.35);
   background: rgba(255, 92, 92, 0.1);
@@ -788,6 +794,10 @@ button:disabled {
 .maintenance-list {
   display: grid;
   gap: 12px;
+}
+
+.maintenance-grid {
+  align-items: start;
 }
 
 .stat-grid {
