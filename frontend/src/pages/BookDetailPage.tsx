@@ -349,8 +349,8 @@ export function BookDetailPage() {
         query: providerQuery.trim() || null,
         isbn: data.isbn,
         fields: automaticApplyFields,
-        min_score: 0.85,
-        review_margin: 0.04
+        min_score: 0.75,
+        review_margin: 0
       });
       setMetadataCandidates(response.items);
       const selected = response.candidate ?? response.items[0] ?? null;

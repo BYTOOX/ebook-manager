@@ -69,8 +69,8 @@ class MetadataEnrichmentService:
         query: str | None = None,
         isbn: str | None = None,
         fields: list[MetadataApplyField] | None = None,
-        min_score: float = 0.85,
-        review_margin: float = 0.04,
+        min_score: float = 0.75,
+        review_margin: float = 0,
     ) -> AutoEnrichmentResult:
         requested_fields = fields or DEFAULT_AUTO_METADATA_FIELDS
         candidates = self.metadata.search_candidates(
@@ -95,7 +95,7 @@ class MetadataEnrichmentService:
                 items=candidates,
                 total=len(candidates),
             )
-        if second and best.score - second.score < review_margin:
+        if review_margin > 0 and second and best.score - second.score < review_margin:
             return AutoEnrichmentResult(
                 status="needs_review",
                 message="Plusieurs propositions proches, verification conseillee",
@@ -141,8 +141,8 @@ class MetadataEnrichmentService:
         *,
         providers: list[MetadataProvider] | None = None,
         fields: list[MetadataApplyField] | None = None,
-        min_score: float = 0.85,
-        review_margin: float = 0.04,
+        min_score: float = 0.75,
+        review_margin: float = 0,
         only_missing_provider: bool = True,
         limit: int | None = None,
     ) -> MetadataLibraryAutoApplyResponse:

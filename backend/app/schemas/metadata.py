@@ -76,8 +76,8 @@ class MetadataAutoApplyPayload(BaseModel):
             "cover",
         ]
     )
-    min_score: float = Field(default=0.85, ge=0, le=1)
-    review_margin: float = Field(default=0.04, ge=0, le=1)
+    min_score: float = Field(default=0.75, ge=0, le=1)
+    review_margin: float = Field(default=0, ge=0, le=1)
 
 
 MetadataAutoApplyStatus = Literal["applied", "needs_review", "no_match"]
@@ -110,8 +110,8 @@ class MetadataLibraryAutoApplyPayload(BaseModel):
             "cover",
         ]
     )
-    min_score: float = Field(default=0.85, ge=0, le=1)
-    review_margin: float = Field(default=0.04, ge=0, le=1)
+    min_score: float = Field(default=0.75, ge=0, le=1)
+    review_margin: float = Field(default=0, ge=0, le=1)
     only_missing_provider: bool = True
     limit: int | None = Field(default=None, ge=1, le=5000)
 

@@ -870,6 +870,19 @@ button:disabled {
   font-size: 13px;
 }
 
+.metadata-review-link {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(245, 197, 66, 0.22);
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--color-accent);
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
 .organization-stats {
   margin-bottom: 16px;
 }

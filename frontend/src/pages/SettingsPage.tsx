@@ -554,6 +554,11 @@ export function AdvancedSettingsPage() {
                     ) : (
                       <span>{item.message}</span>
                     )}
+                    {item.status !== "applied" && (
+                      <Link className="metadata-review-link" to={`/books/${item.book_id}`}>
+                        Revoir
+                      </Link>
+                    )}
                   </p>
                 </div>
               ))}

@@ -750,6 +750,84 @@ def test_metadata_auto_applies_high_confidence_candidate(monkeypatch) -> None:
     assert pending.json() == {"items": [], "total": 0}
 
 
+def test_metadata_auto_applies_close_candidate_above_seventy_five_percent(monkeypatch) -> None:
+    client = TestClient(app)
+    authenticate_client(client)
+
+    upload = client.post(
+        "/api/v1/books/upload",
+        files={"file": ("metadata-close.epub", make_test_epub(), "application/epub+zip")},
+    )
+    assert upload.status_code == 201
+    book_id = upload.json()["book_id"]
+
+    def fake_search_candidates(self, db, book, payload):
+        best = MetadataProviderResult(
+            book_id=book.id,
+            provider="googlebooks",
+            provider_item_id="gb-close-best",
+            query=payload.query or book.title,
+            raw_json={},
+            normalized_json={
+                "provider": "googlebooks",
+                "provider_item_id": "gb-close-best",
+                "title": "Aurelia Close Best",
+                "authors": ["Elian Vale"],
+                "language": "fr",
+            },
+            score=Decimal("0.750"),
+        )
+        second = MetadataProviderResult(
+            book_id=book.id,
+            provider="googlebooks",
+            provider_item_id="gb-close-second",
+            query=payload.query or book.title,
+            raw_json={},
+            normalized_json={
+                "provider": "googlebooks",
+                "provider_item_id": "gb-close-second",
+                "title": "Aurelia Close Second",
+                "authors": ["Elian Vale"],
+                "language": "fr",
+            },
+            score=Decimal("0.740"),
+        )
+        db.add_all([best, second])
+        db.flush()
+        return [
+            MetadataCandidate(
+                id=best.id,
+                provider="googlebooks",
+                provider_item_id="gb-close-best",
+                score=0.75,
+                title="Aurelia Close Best",
+                authors=["Elian Vale"],
+                language="fr",
+            ),
+            MetadataCandidate(
+                id=second.id,
+                provider="googlebooks",
+                provider_item_id="gb-close-second",
+                score=0.74,
+                title="Aurelia Close Second",
+                authors=["Elian Vale"],
+                language="fr",
+            ),
+        ]
+
+    monkeypatch.setattr(MetadataService, "search_candidates", fake_search_candidates)
+
+    auto = client.post(
+        f"/api/v1/books/{book_id}/metadata/auto",
+        json={"fields": ["association", "title", "authors", "language"]},
+    )
+    assert auto.status_code == 200
+    payload = auto.json()
+    assert payload["status"] == "applied"
+    assert payload["book"]["title"] == "Aurelia Close Best"
+    assert payload["book"]["metadata_provider_id"] == "gb-close-best"
+
+
 def test_metadata_batch_auto_applies_library(monkeypatch) -> None:
     client = TestClient(app)
     authenticate_client(client)
