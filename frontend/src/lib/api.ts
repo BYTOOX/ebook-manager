@@ -163,6 +163,11 @@ export type User = {
   display_name: string | null;
 };
 
+export type SetupStatus = {
+  available: boolean;
+  requires_token: boolean;
+};
+
 export type BookListItem = {
   id: string;
   title: string;
@@ -466,6 +471,10 @@ export async function searchBookMetadata(
     method: "POST",
     body: JSON.stringify(payload)
   });
+}
+
+export async function getSetupStatus() {
+  return apiFetch<SetupStatus>("/auth/setup-status");
 }
 
 export async function autoApplyBookMetadata(

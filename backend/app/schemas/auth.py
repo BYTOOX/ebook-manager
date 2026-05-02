@@ -20,6 +20,11 @@ class SetupRequest(BaseModel):
     setup_token: str | None = None
 
 
+class SetupStatusResponse(BaseModel):
+    available: bool
+    requires_token: bool
+
+
 class LoginRequest(BaseModel):
     username: str
     password: str

@@ -62,6 +62,10 @@ def test_health_endpoint() -> None:
 
 def test_first_user_setup_login_and_me() -> None:
     client = TestClient(app)
+    setup_status = client.get("/api/v1/auth/setup-status")
+    assert setup_status.status_code == 200
+    assert setup_status.json() == {"available": True, "requires_token": False}
+
     missing_auth = client.get("/api/v1/auth/me")
     assert missing_auth.status_code == 401
     assert missing_auth.headers["www-authenticate"] == "Bearer"
@@ -75,6 +79,16 @@ def test_first_user_setup_login_and_me() -> None:
     setup = authenticate_client(client)
     assert "set-cookie" not in setup.headers
     assert setup.json()["user"]["username"] == "admin"
+
+    setup_status_after = client.get("/api/v1/auth/setup-status")
+    assert setup_status_after.status_code == 200
+    assert setup_status_after.json() == {"available": False, "requires_token": False}
+
+    second_setup = client.post(
+        "/api/v1/auth/setup",
+        json={"username": "second", "password": "very-secure-password"},
+    )
+    assert second_setup.status_code == 409
 
     me = client.get("/api/v1/auth/me")
     assert me.status_code == 200
@@ -93,6 +107,35 @@ def test_first_user_setup_login_and_me() -> None:
     assert login.status_code == 200
     assert login.json()["ok"] is True
     assert login.json()["access_token"]
+
+
+def test_first_user_setup_can_require_token(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "FIRST_USER_SETUP_TOKEN", "setup-secret")
+    client = TestClient(app)
+
+    status_response = client.get("/api/v1/auth/setup-status")
+    assert status_response.status_code == 200
+    assert status_response.json() == {"available": True, "requires_token": True}
+
+    invalid = client.post(
+        "/api/v1/auth/setup",
+        json={
+            "username": "admin",
+            "password": "very-secure-password",
+            "setup_token": "wrong",
+        },
+    )
+    assert invalid.status_code == 403
+
+    valid = client.post(
+        "/api/v1/auth/setup",
+        json={
+            "username": "admin",
+            "password": "very-secure-password",
+            "setup_token": "setup-secret",
+        },
+    )
+    assert valid.status_code == 201
 
 
 def test_reading_settings_are_persisted_and_validated() -> None:

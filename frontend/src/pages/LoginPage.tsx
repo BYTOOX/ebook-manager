@@ -1,7 +1,8 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { Lock, LogIn, UserPlus } from "lucide-react";
 import { useAuth } from "../providers/AuthProvider";
 import { BrandLogo } from "../components/BrandLogo";
+import { getSetupStatus, type SetupStatus } from "../lib/api";
 
 export function LoginPage() {
   const { login, setup } = useAuth();
@@ -9,8 +10,31 @@ export function LoginPage() {
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("Aurelia");
+  const [setupToken, setSetupToken] = useState("");
+  const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    getSetupStatus()
+      .then((status) => {
+        if (!alive) {
+          return;
+        }
+        setSetupStatus(status);
+        setMode(status.available ? "setup" : "login");
+      })
+      .catch(() => {
+        if (alive) {
+          setSetupStatus({ available: false, requires_token: false });
+          setMode("login");
+        }
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -18,7 +42,7 @@ export function LoginPage() {
     setError(null);
     try {
       if (mode === "setup") {
-        await setup(username, password, displayName);
+        await setup(username, password, displayName, setupToken);
       } else {
         await login(username, password);
       }
@@ -41,10 +65,12 @@ export function LoginPage() {
             <LogIn size={16} aria-hidden="true" />
             Connexion
           </button>
-          <button className={mode === "setup" ? "active" : ""} onClick={() => setMode("setup")}>
-            <UserPlus size={16} aria-hidden="true" />
-            Setup
-          </button>
+          {setupStatus?.available && (
+            <button className={mode === "setup" ? "active" : ""} onClick={() => setMode("setup")}>
+              <UserPlus size={16} aria-hidden="true" />
+              Setup
+            </button>
+          )}
         </div>
 
         <form onSubmit={handleSubmit} className="auth-form">
@@ -56,6 +82,16 @@ export function LoginPage() {
             <label>
               <span>Nom affiche</span>
               <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
+            </label>
+          )}
+          {mode === "setup" && setupStatus?.requires_token && (
+            <label>
+              <span>Token setup</span>
+              <input
+                value={setupToken}
+                onChange={(event) => setSetupToken(event.target.value)}
+                autoComplete="one-time-code"
+              />
             </label>
           )}
           <label>

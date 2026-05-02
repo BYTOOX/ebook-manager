@@ -5,7 +5,14 @@ from fastapi import APIRouter, HTTPException, status
 from app.api.deps import CurrentUser, DbSession
 from app.core.config import get_settings
 from app.core.security import create_access_token
-from app.schemas.auth import LoginRequest, LoginResponse, PasswordChangeRequest, SetupRequest, UserRead
+from app.schemas.auth import (
+    LoginRequest,
+    LoginResponse,
+    PasswordChangeRequest,
+    SetupRequest,
+    SetupStatusResponse,
+    UserRead,
+)
 from app.services.user_service import (
     authenticate_user,
     create_user,
@@ -37,6 +44,15 @@ def setup_first_user(payload: SetupRequest, db: DbSession) -> LoginResponse:
 
     user = create_user(db, payload.username, payload.password, payload.display_name)
     return build_login_response(user)
+
+
+@router.get("/setup-status", response_model=SetupStatusResponse)
+def setup_status(db: DbSession) -> SetupStatusResponse:
+    settings = get_settings()
+    return SetupStatusResponse(
+        available=not has_any_user(db),
+        requires_token=bool(settings.FIRST_USER_SETUP_TOKEN),
+    )
 
 
 @router.post("/login", response_model=LoginResponse)

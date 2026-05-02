@@ -23,7 +23,7 @@ type AuthContextValue = {
   user: User | null;
   refresh: () => Promise<void>;
   login: (username: string, password: string) => Promise<void>;
-  setup: (username: string, password: string, displayName?: string) => Promise<void>;
+  setup: (username: string, password: string, displayName?: string, setupToken?: string) => Promise<void>;
   logout: () => Promise<void>;
 };
 
@@ -131,13 +131,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setStatus("authenticated");
   }, []);
 
-  const setup = useCallback(async (username: string, password: string, displayName?: string) => {
+  const setup = useCallback(async (username: string, password: string, displayName?: string, setupToken?: string) => {
     const response = await apiFetch<LoginResponse>("/auth/setup", {
       method: "POST",
       body: JSON.stringify({
         username,
         password,
-        display_name: displayName
+        display_name: displayName,
+        setup_token: setupToken?.trim() || null
       })
     });
     writeAccessToken(response.access_token);
