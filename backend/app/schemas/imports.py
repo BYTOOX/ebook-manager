@@ -17,6 +17,7 @@ class ImportJobRead(BaseModel):
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    updated_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -33,13 +34,31 @@ class UploadBookResponse(BaseModel):
     warning: str | None = None
 
 
-class ScanRequest(BaseModel):
-    path: str | None = None
+class ImportBatchRead(BaseModel):
+    id: UUID
+    status: str
+    total_items: int
+    processed_items: int
+    success_count: int
+    warning_count: int
+    failed_count: int
+    canceled_count: int
+    progress_percent: float
+    message: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    updated_at: datetime
+    finished_at: datetime | None = None
+    jobs: list[ImportJobRead] = []
+
+    model_config = ConfigDict(from_attributes=True)
 
 
-class ScanResponse(BaseModel):
-    scanned: int
-    imported: int
-    warnings: int
-    failed: int
-    jobs: list[ImportJobRead]
+class ImportBatchListResponse(BaseModel):
+    items: list[ImportBatchRead]
+    total: int
+
+
+class QueuedUploadResponse(BaseModel):
+    job_id: UUID
+    total: int

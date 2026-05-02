@@ -282,6 +282,7 @@ export type ReadingSettingsUpdate = Partial<
 
 export type ImportJob = {
   id: string;
+  batch_id?: string | null;
   source: "upload" | "scan" | string;
   status: "pending" | "running" | "success" | "warning" | "failed" | string;
   filename: string | null;
@@ -291,10 +292,39 @@ export type ImportJob = {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  updated_at?: string | null;
 };
 
 export type ImportJobsResponse = {
   items: ImportJob[];
+  total: number;
+};
+
+export type ImportBatch = {
+  id: string;
+  status: string;
+  total_items: number;
+  processed_items: number;
+  success_count: number;
+  warning_count: number;
+  failed_count: number;
+  canceled_count: number;
+  progress_percent: number;
+  message: string | null;
+  created_at: string;
+  started_at: string | null;
+  updated_at: string;
+  finished_at: string | null;
+  jobs: ImportJob[];
+};
+
+export type ImportBatchListResponse = {
+  items: ImportBatch[];
+  total: number;
+};
+
+export type QueuedUploadResponse = {
+  job_id: string;
   total: number;
 };
 
@@ -303,14 +333,6 @@ export type UploadBookResponse = {
   book_id: string | null;
   status: string;
   warning: string | null;
-};
-
-export type ScanResponse = {
-  scanned: number;
-  imported: number;
-  warnings: number;
-  failed: number;
-  jobs: ImportJob[];
 };
 
 export type CollectionSummary = {
@@ -402,6 +424,38 @@ export type MetadataSearchResponse = {
   total: number;
 };
 
+export type AppSettingsValues = {
+  max_upload_size_mb: number;
+  import_max_files_per_batch: number;
+  import_worker_concurrency: number;
+  metadata_openlibrary_enabled: boolean;
+  metadata_googlebooks_enabled: boolean;
+  metadata_auto_enrich_on_import: boolean;
+  trash_retention_hours: number;
+  trash_auto_purge_enabled: boolean;
+  default_theme: string;
+  default_reader_theme: string;
+};
+
+export type AppSettingsRead = {
+  values: AppSettingsValues;
+  defaults: AppSettingsValues;
+  overrides: Record<string, unknown>;
+  updated_at: string | null;
+};
+
+export type SystemSettingsRead = {
+  app_env: string;
+  app_url: string;
+  api_url: string;
+  library_path: string;
+  incoming_path: string;
+  cors_origins: string[];
+  database_url_configured: boolean;
+  secret_key_configured: boolean;
+  setup_token_configured: boolean;
+};
+
 export type MetadataAutoApplyResponse = {
   status: "applied" | "needs_review" | "no_match";
   message: string;
@@ -471,10 +525,31 @@ export async function uploadBook(file: File) {
   });
 }
 
-export async function scanIncoming() {
-  return apiFetch<ScanResponse>("/library/scan", {
+export async function uploadImportBatch(files: File[], relativePaths?: string[]) {
+  const formData = new FormData();
+  files.forEach((file, index) => {
+    formData.append("files", file, file.name);
+    formData.append("relative_paths", relativePaths?.[index] || file.name);
+  });
+  return apiFetch<QueuedUploadResponse>("/imports/upload", {
     method: "POST",
-    body: JSON.stringify({})
+    body: formData
+  });
+}
+
+export async function listImportBatches(limit = 20) {
+  return apiFetch<ImportBatchListResponse>(`/jobs?limit=${limit}`);
+}
+
+export async function cancelImportBatch(jobId: string) {
+  return apiFetch<ImportBatch>(`/jobs/${jobId}/cancel`, {
+    method: "POST"
+  });
+}
+
+export async function retryImportBatch(jobId: string) {
+  return apiFetch<ImportBatch>(`/jobs/${jobId}/retry`, {
+    method: "POST"
   });
 }
 
@@ -589,6 +664,21 @@ export async function updateReadingSettings(payload: ReadingSettingsUpdate) {
     method: "PUT",
     body: JSON.stringify(payload)
   });
+}
+
+export async function getAppSettings() {
+  return apiFetch<AppSettingsRead>("/settings/app");
+}
+
+export async function updateAppSettings(payload: Partial<AppSettingsValues>) {
+  return apiFetch<AppSettingsRead>("/settings/app", {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function getSystemSettings() {
+  return apiFetch<SystemSettingsRead>("/settings/system");
 }
 
 export async function createCollection(payload: { name: string; description?: string | null }) {

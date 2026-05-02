@@ -4,7 +4,14 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.api.deps import CurrentUser, DbSession
 from app.models.settings import ReadingSettings
-from app.schemas.settings import ReadingSettingsRead, ReadingSettingsUpdate
+from app.schemas.settings import (
+    AppSettingsRead,
+    AppSettingsUpdate,
+    ReadingSettingsRead,
+    ReadingSettingsUpdate,
+    SystemSettingsRead,
+)
+from app.services.settings_service import read_app_settings, read_system_settings, update_app_settings
 
 router = APIRouter()
 
@@ -39,3 +46,25 @@ def update_settings(
     db.commit()
     db.refresh(settings)
     return ReadingSettingsRead.model_validate(settings)
+
+
+@router.get("/app", response_model=AppSettingsRead)
+def app_settings(current_user: CurrentUser, db: DbSession) -> AppSettingsRead:
+    del current_user
+    return read_app_settings(db)
+
+
+@router.put("/app", response_model=AppSettingsRead)
+def update_app_settings_route(
+    payload: AppSettingsUpdate,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> AppSettingsRead:
+    del current_user
+    return update_app_settings(db, payload)
+
+
+@router.get("/system", response_model=SystemSettingsRead)
+def system_settings(current_user: CurrentUser) -> SystemSettingsRead:
+    del current_user
+    return read_system_settings()

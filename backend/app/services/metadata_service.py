@@ -49,6 +49,8 @@ class MetadataService:
         normalized: list[dict[str, Any]] = []
 
         with httpx.Client(timeout=8, follow_redirects=True) as client:
+            if "openlibrary" in providers and self.settings.METADATA_OPENLIBRARY_ENABLED:
+                normalized.extend(self._safe_search_provider("openlibrary", client, context, isbn))
             if "googlebooks" in providers and self.settings.METADATA_GOOGLEBOOKS_ENABLED:
                 normalized.extend(self._safe_search_provider("googlebooks", client, context, isbn))
 

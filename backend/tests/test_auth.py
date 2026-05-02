@@ -54,6 +54,22 @@ def authenticate_client(client: TestClient):
     return setup
 
 
+def upload_queued_epubs(client: TestClient, files: dict[str, bytes]) -> dict:
+    response = client.post(
+        "/api/v1/imports/upload",
+        data={"relative_paths": list(files)},
+        files=[
+            ("files", (Path(path).name, content, "application/epub+zip"))
+            for path, content in files.items()
+        ],
+    )
+    assert response.status_code == 202
+    job_id = response.json()["job_id"]
+    job = client.get(f"/api/v1/jobs/{job_id}")
+    assert job.status_code == 200
+    return job.json()
+
+
 def test_health_endpoint() -> None:
     client = TestClient(app)
     response = client.get("/api/v1/health")
@@ -209,19 +225,16 @@ def test_epub_upload_extracts_book_and_detects_duplicate() -> None:
     assert duplicate.json()["book_id"] == payload["book_id"]
 
 
-def test_scan_imports_epubs_recursively_from_series_folders() -> None:
+def test_queued_import_preserves_relative_series_paths() -> None:
     client = TestClient(app)
     authenticate_client(client)
 
-    series_dir = TEST_LIBRARY_PATH / "incoming" / "Nom de la serie"
-    series_dir.mkdir(parents=True)
-    (series_dir / "Tome1-aurelia.epub").write_bytes(make_test_epub())
-
-    scan = client.post("/api/v1/library/scan", json={})
-    assert scan.status_code == 200
-    payload = scan.json()
-    assert payload["scanned"] == 1
-    assert payload["imported"] == 1
+    payload = upload_queued_epubs(
+        client,
+        {"Nom de la serie/Tome1-aurelia.epub": make_test_epub()},
+    )
+    assert payload["total_items"] == 1
+    assert payload["success_count"] == 1
     assert payload["jobs"][0]["filename"] == "Nom de la serie/Tome1-aurelia.epub"
 
     books = client.get("/api/v1/books")
@@ -230,29 +243,22 @@ def test_scan_imports_epubs_recursively_from_series_folders() -> None:
     assert books.json()["items"][0]["title"] == "Aurelia Phase Two"
 
 
-def test_scan_imports_every_epub_recursively_regardless_of_naming() -> None:
+def test_queued_import_accepts_multiple_epubs_regardless_of_naming() -> None:
     client = TestClient(app)
     authenticate_client(client)
 
-    incoming = TEST_LIBRARY_PATH / "incoming"
     files = {
-        incoming / "Loose Book.EPUB": make_test_epub("Loose Book", "9780000000101"),
-        incoming / "Auteurs divers" / "Anthologie bizarre.epub": make_test_epub(
+        "Loose Book.EPUB": make_test_epub("Loose Book", "9780000000101"),
+        "Auteurs divers/Anthologie bizarre.epub": make_test_epub(
             "Anthologie bizarre", "9780000000102"
         ),
-        incoming / "Serie X" / "Sous-cycle" / "vol_003-final.epub": make_test_epub(
+        "Serie X/Sous-cycle/vol_003-final.epub": make_test_epub(
             "Volume Final", "9780000000103"
         ),
     }
-    for path, content in files.items():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(content)
-
-    scan = client.post("/api/v1/library/scan", json={})
-    assert scan.status_code == 200
-    payload = scan.json()
-    assert payload["scanned"] == 3
-    assert payload["imported"] == 3
+    payload = upload_queued_epubs(client, files)
+    assert payload["total_items"] == 3
+    assert payload["success_count"] == 3
     assert {job["filename"] for job in payload["jobs"]} == {
         "Loose Book.EPUB",
         "Auteurs divers/Anthologie bizarre.epub",
@@ -273,15 +279,11 @@ def test_book_search_matches_nested_original_filename() -> None:
     client = TestClient(app)
     authenticate_client(client)
 
-    cherub_dir = TEST_LIBRARY_PATH / "incoming" / "CHERUB"
-    cherub_dir.mkdir(parents=True)
-    (cherub_dir / "100 jours en enfer.epub").write_bytes(
-        make_test_epub("100 jours en enfer", "9780000000201")
+    payload = upload_queued_epubs(
+        client,
+        {"CHERUB/100 jours en enfer.epub": make_test_epub("100 jours en enfer", "9780000000201")},
     )
-
-    scan = client.post("/api/v1/library/scan", json={})
-    assert scan.status_code == 200
-    assert scan.json()["imported"] == 1
+    assert payload["success_count"] == 1
 
     search = client.get("/api/v1/books?q=cherub")
     assert search.status_code == 200
@@ -294,23 +296,21 @@ def test_book_detail_cleans_description_and_lists_series_books() -> None:
     client = TestClient(app)
     authenticate_client(client)
 
-    cherub_dir = TEST_LIBRARY_PATH / "incoming" / "CHERUB"
-    cherub_dir.mkdir(parents=True)
-    (cherub_dir / "CHERUB 01.epub").write_bytes(
-        make_test_epub(
-            "100 jours en enfer",
-            "9780000000301",
-            '<h3><span class="Apple-style-span">James rejoint Cherub.</span></h3>',
-        )
+    payload = upload_queued_epubs(
+        client,
+        {
+            "CHERUB/CHERUB 01.epub": make_test_epub(
+                "100 jours en enfer",
+                "9780000000301",
+                '<h3><span class="Apple-style-span">James rejoint Cherub.</span></h3>',
+            ),
+            "CHERUB/CHERUB 02.epub": make_test_epub(
+                "Trafic", "9780000000302", "Deuxieme mission."
+            ),
+        },
     )
-    (cherub_dir / "CHERUB 02.epub").write_bytes(
-        make_test_epub("Trafic", "9780000000302", "Deuxieme mission.")
-    )
-
-    scan = client.post("/api/v1/library/scan", json={})
-    assert scan.status_code == 200
     first_book_id = next(
-        job["result_book_id"] for job in scan.json()["jobs"] if job["filename"] == "CHERUB/CHERUB 01.epub"
+        job["result_book_id"] for job in payload["jobs"] if job["filename"] == "CHERUB/CHERUB 01.epub"
     )
 
     detail = client.get(f"/api/v1/books/{first_book_id}")
@@ -1314,14 +1314,14 @@ def test_organization_series_materializes_import_path_series() -> None:
     client = TestClient(app)
     authenticate_client(client)
 
-    series_dir = TEST_LIBRARY_PATH / "incoming" / "CHERUB"
-    series_dir.mkdir(parents=True)
-    (series_dir / "CHERUB 01.epub").write_bytes(make_test_epub("100 jours en enfer", "9780000000601"))
-    (series_dir / "CHERUB 02.epub").write_bytes(make_test_epub("Trafic", "9780000000602"))
-
-    scan = client.post("/api/v1/library/scan", json={})
-    assert scan.status_code == 200
-    assert scan.json()["imported"] == 2
+    payload = upload_queued_epubs(
+        client,
+        {
+            "CHERUB/CHERUB 01.epub": make_test_epub("100 jours en enfer", "9780000000601"),
+            "CHERUB/CHERUB 02.epub": make_test_epub("Trafic", "9780000000602"),
+        },
+    )
+    assert payload["success_count"] == 2
 
     series = client.get("/api/v1/organization/series")
     assert series.status_code == 200
@@ -1343,20 +1343,98 @@ def test_series_index_does_not_treat_title_number_as_volume() -> None:
     client = TestClient(app)
     authenticate_client(client)
 
-    cherub_dir = TEST_LIBRARY_PATH / "incoming" / "CHERUB"
-    cherub_dir.mkdir(parents=True)
-    (cherub_dir / "100 jours en enfer.epub").write_bytes(
-        make_test_epub("100 jours en enfer", "9780000000401")
+    payload = upload_queued_epubs(
+        client,
+        {"CHERUB/100 jours en enfer.epub": make_test_epub("100 jours en enfer", "9780000000401")},
     )
-
-    scan = client.post("/api/v1/library/scan", json={})
-    assert scan.status_code == 200
-    book_id = scan.json()["jobs"][0]["result_book_id"]
+    book_id = payload["jobs"][0]["result_book_id"]
 
     detail = client.get(f"/api/v1/books/{book_id}")
     assert detail.status_code == 200
     assert detail.json()["series"]["name"] == "CHERUB"
     assert detail.json()["series"]["index"] is None
+
+
+def test_queued_import_duplicate_warning_invalid_retry_and_cancel() -> None:
+    client = TestClient(app)
+    authenticate_client(client)
+
+    epub_bytes = make_test_epub("Queue Original", "9780000000671")
+    first = upload_queued_epubs(client, {"queue/original.epub": epub_bytes})
+    assert first["success_count"] == 1
+
+    duplicate = upload_queued_epubs(client, {"queue/duplicate.epub": epub_bytes})
+    assert duplicate["warning_count"] == 1
+    assert duplicate["jobs"][0]["status"] == "warning"
+
+    invalid = upload_queued_epubs(client, {"queue/broken.epub": b"not an epub"})
+    assert invalid["failed_count"] == 1
+    retry = client.post(f"/api/v1/jobs/{invalid['id']}/retry")
+    assert retry.status_code == 200
+    retried = client.get(f"/api/v1/jobs/{invalid['id']}")
+    assert retried.status_code == 200
+    assert retried.json()["failed_count"] == 1
+
+    rejected = client.post(
+        "/api/v1/imports/upload",
+        data={"relative_paths": ["not-epub.txt"]},
+        files=[("files", ("not-epub.txt", b"plain", "text/plain"))],
+    )
+    assert rejected.status_code == 400
+
+    with SessionLocal() as db:
+        batch = models.ImportBatch(status="pending", total_items=1)
+        db.add(batch)
+        db.flush()
+        db.add(
+            models.ImportJob(
+                batch_id=batch.id,
+                source="queued_upload",
+                status="pending",
+                filename="cancel.epub",
+                file_path=str(TEST_LIBRARY_PATH / "cancel.epub"),
+            )
+        )
+        db.commit()
+        batch_id = str(batch.id)
+
+    canceled = client.post(f"/api/v1/jobs/{batch_id}/cancel")
+    assert canceled.status_code == 200
+    assert canceled.json()["status"] == "canceled"
+    assert canceled.json()["canceled_count"] == 1
+
+
+def test_app_settings_override_env_and_system_settings_are_read_only() -> None:
+    client = TestClient(app)
+    authenticate_client(client)
+
+    current = client.get("/api/v1/settings/app")
+    assert current.status_code == 200
+    assert current.json()["values"]["max_upload_size_mb"] == 200
+
+    updated = client.put(
+        "/api/v1/settings/app",
+        json={
+            "max_upload_size_mb": 123,
+            "import_max_files_per_batch": 7,
+            "metadata_googlebooks_enabled": False,
+            "trash_retention_hours": 48,
+        },
+    )
+    assert updated.status_code == 200
+    values = updated.json()["values"]
+    assert values["max_upload_size_mb"] == 123
+    assert values["import_max_files_per_batch"] == 7
+    assert values["metadata_googlebooks_enabled"] is False
+    assert values["trash_retention_hours"] == 48
+
+    invalid = client.put("/api/v1/settings/app", json={"max_upload_size_mb": 0})
+    assert invalid.status_code == 422
+
+    system = client.get("/api/v1/settings/system")
+    assert system.status_code == 200
+    assert "secret_key" not in system.json()
+    assert system.json()["library_path"] == str(TEST_LIBRARY_PATH)
 
 
 def make_test_epub(

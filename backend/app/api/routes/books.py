@@ -59,6 +59,7 @@ from app.services.metadata_enrichment_service import (
 )
 from app.services.metadata_service import MetadataService
 from app.services.progress_service import apply_reading_progress, serialize_progress
+from app.services.settings_service import get_app_settings_values, get_runtime_settings
 from app.services.storage_service import StorageService
 
 router = APIRouter()
@@ -124,10 +125,11 @@ def _is_purgeable(book: Book, now: datetime | None = None) -> bool:
     return trash_expires_at <= (now or _utc_now())
 
 
-def _trash_book(book: Book) -> None:
+def _trash_book(db: Session, book: Book) -> None:
     now = _utc_now()
+    retention_hours = get_app_settings_values(db).trash_retention_hours
     book.deleted_at = now
-    book.trash_expires_at = now + timedelta(hours=24)
+    book.trash_expires_at = now + timedelta(hours=retention_hours)
 
 
 def _remove_book_files(book: Book) -> None:
@@ -174,7 +176,9 @@ def _purge_book(db: Session, book: Book) -> None:
     db.delete(book)
 
 
-def _purge_expired_trash(db: Session) -> int:
+def _purge_expired_trash(db: Session, *, force: bool = False) -> int:
+    if not force and not get_app_settings_values(db).trash_auto_purge_enabled:
+        return 0
     now = _utc_now()
     expired = list(
         db.scalars(
@@ -289,10 +293,10 @@ def _apply_metadata_candidate(
         cover_url = _clean_candidate_text(candidate.get("cover_url"))
         if not cover_url:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provider cover not available")
-        cover_bytes = MetadataService(get_settings()).download_cover(cover_url)
+        cover_bytes = MetadataService(get_runtime_settings(db)).download_cover(cover_url)
         if not cover_bytes:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Provider cover download failed")
-        cover_path = StorageService(get_settings()).save_cover_jpeg(cover_bytes, book.id)
+        cover_path = StorageService(get_runtime_settings(db)).save_cover_jpeg(cover_bytes, book.id)
         if not cover_path:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Provider cover could not be saved")
         book.cover_path = str(cover_path)
@@ -462,7 +466,7 @@ def _apply_bulk_action_to_book(
     if action in {"delete", "trash"}:
         if book.deleted_at is not None:
             raise ValueError("Book already in trash")
-        _trash_book(book)
+        _trash_book(db, book)
         return
 
     if action == "restore":
@@ -523,7 +527,7 @@ def _apply_bulk_action_to_book(
             None if series_index in {None, ""} else float(series_index),
         )
     elif action == "metadata_auto":
-        MetadataEnrichmentService(get_settings()).auto_enrich_book(db, book)
+        MetadataEnrichmentService(get_runtime_settings(db)).auto_enrich_book(db, book)
     else:
         raise ValueError("Unsupported bulk action")
 
@@ -750,7 +754,7 @@ async def upload_book(
     if not file.filename or not file.filename.lower().endswith(".epub"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only EPUB files are supported")
 
-    service = ImportService(get_settings())
+    service = ImportService(get_runtime_settings(db))
     try:
         tmp_path = await service.storage.save_upload_to_tmp(file)
         job = service.import_epub(
@@ -780,7 +784,7 @@ def search_book_metadata(
 ) -> MetadataSearchResponse:
     del current_user
     book = _get_book_or_404(db, book_id)
-    service = MetadataService(get_settings())
+    service = MetadataService(get_runtime_settings(db))
     candidates = service.search_candidates(db, book, payload)
     db.commit()
     return MetadataSearchResponse(items=candidates, total=len(candidates))
@@ -793,7 +797,7 @@ def auto_apply_library_metadata(
     db: DbSession,
 ) -> MetadataLibraryAutoApplyResponse:
     del current_user
-    return MetadataEnrichmentService(get_settings()).auto_enrich_library(
+    return MetadataEnrichmentService(get_runtime_settings(db)).auto_enrich_library(
         db,
         providers=payload.providers,
         fields=payload.fields,
@@ -811,7 +815,7 @@ def list_pending_metadata_books(
     limit: int = Query(default=5000, ge=1, le=5000),
 ) -> MetadataPendingBooksResponse:
     del current_user
-    return MetadataEnrichmentService(get_settings()).pending_books(db, limit=limit)
+    return MetadataEnrichmentService(get_runtime_settings(db)).pending_books(db, limit=limit)
 
 
 @router.post("/{book_id}/metadata/auto", response_model=MetadataAutoApplyResponse)
@@ -822,7 +826,7 @@ def auto_apply_book_metadata(
     db: DbSession,
 ) -> MetadataAutoApplyResponse:
     book = _get_book_or_404(db, book_id)
-    result = MetadataEnrichmentService(get_settings()).auto_enrich_book(
+    result = MetadataEnrichmentService(get_runtime_settings(db)).auto_enrich_book(
         db,
         book,
         providers=payload.providers,
@@ -993,7 +997,7 @@ def get_book_cover(book_id: UUID, current_user: CurrentUser, db: DbSession) -> F
 def delete_book(book_id: UUID, current_user: CurrentUser, db: DbSession) -> Response:
     del current_user
     book = _get_book_or_404(db, book_id)
-    _trash_book(book)
+    _trash_book(db, book)
     db.add(book)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

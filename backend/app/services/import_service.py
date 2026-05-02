@@ -39,11 +39,34 @@ class ImportService:
         self.storage.ensure_layout()
         job = ImportJob(
             source=source,
-            status="running",
+            status="pending",
             filename=original_filename or source_path.name,
             file_path=str(source_path),
-            started_at=datetime.now(UTC),
         )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+        return self.run_import_job(
+            db,
+            job,
+            source_path,
+            original_filename=original_filename,
+            remove_source=remove_source,
+        )
+
+    def run_import_job(
+        self,
+        db: Session,
+        job: ImportJob,
+        source_path: Path,
+        *,
+        original_filename: str | None = None,
+        remove_source: bool = False,
+    ) -> ImportJob:
+        job.status = "running"
+        job.file_path = str(source_path)
+        job.filename = original_filename or job.filename or source_path.name
+        job.started_at = datetime.now(UTC)
         db.add(job)
         db.commit()
         db.refresh(job)

@@ -4,7 +4,9 @@ from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import auth, books, health, imports, organization, settings, sync
+from app.core.database import SessionLocal
 from app.core.config import get_settings
+from app.services.import_queue_service import ImportQueueService, start_import_worker
 
 
 def create_app() -> FastAPI:
@@ -36,6 +38,12 @@ def create_app() -> FastAPI:
     @app.get("/health", tags=["health"])
     def root_health() -> dict[str, str]:
         return {"status": "ok", "app": app_settings.APP_NAME}
+
+    @app.on_event("startup")
+    def startup_jobs() -> None:
+        with SessionLocal() as db:
+            ImportQueueService(app_settings).reset_running(db)
+        start_import_worker()
 
     return app
 

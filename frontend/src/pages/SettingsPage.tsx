@@ -21,13 +21,15 @@ import { Link } from "react-router-dom";
 import {
   apiFetch,
   autoApplyBookMetadata,
+  getAppSettings,
+  getSystemSettings,
   listPendingMetadataBooks,
-  scanIncoming,
-  type ImportJobsResponse,
+  updateAppSettings,
+  type AppSettingsValues,
+  type ImportBatchListResponse,
   type MetadataLibraryAutoApplyItem,
   type MetadataLibraryAutoApplyResponse,
   type MetadataPendingBook,
-  type ScanResponse
 } from "../lib/api";
 import { db, type OfflineBook } from "../lib/db";
 import { removeOfflineBook } from "../lib/offline";
@@ -168,8 +170,9 @@ export function AdvancedSettingsPage() {
   const queryClient = useQueryClient();
   const { online } = useOffline();
   const { state: syncState, flush } = useSyncState();
-  const [scanResult, setScanResult] = useState<ScanResponse | null>(null);
-  const [scanBusy, setScanBusy] = useState(false);
+  const [settingsDraft, setSettingsDraft] = useState<Partial<AppSettingsValues>>({});
+  const [settingsBusy, setSettingsBusy] = useState(false);
+  const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
   const [metadataResult, setMetadataResult] = useState<MetadataLibraryAutoApplyResponse | null>(null);
   const [metadataBusy, setMetadataBusy] = useState(false);
   const [metadataError, setMetadataError] = useState<string | null>(null);
@@ -185,8 +188,18 @@ export function AdvancedSettingsPage() {
 
   const jobs = useQuery({
     queryKey: ["advanced", "import-jobs"],
-    queryFn: () => apiFetch<ImportJobsResponse>("/import-jobs?limit=6"),
+    queryFn: () => apiFetch<ImportBatchListResponse>("/jobs?limit=6"),
     refetchInterval: 45_000
+  });
+
+  const appSettings = useQuery({
+    queryKey: ["settings", "app"],
+    queryFn: getAppSettings
+  });
+
+  const systemSettings = useQuery({
+    queryKey: ["settings", "system"],
+    queryFn: getSystemSettings
   });
 
   const localStats = useQuery({
@@ -205,15 +218,21 @@ export function AdvancedSettingsPage() {
     };
   }, [queryClient]);
 
-  async function handleScan() {
-    setScanBusy(true);
-    setScanResult(null);
+  useEffect(() => {
+    if (appSettings.data?.values) {
+      setSettingsDraft(appSettings.data.values);
+    }
+  }, [appSettings.data?.values]);
+
+  async function handleSaveSettings() {
+    setSettingsBusy(true);
+    setSettingsMessage(null);
     try {
-      const result = await scanIncoming();
-      setScanResult(result);
-      await queryClient.invalidateQueries({ queryKey: ["advanced", "import-jobs"] });
+      await updateAppSettings(settingsDraft);
+      setSettingsMessage("Settings sauvegardes.");
+      await queryClient.invalidateQueries({ queryKey: ["settings", "app"] });
     } finally {
-      setScanBusy(false);
+      setSettingsBusy(false);
     }
   }
 
@@ -318,6 +337,11 @@ export function AdvancedSettingsPage() {
   }
 
   const stats = localStats.data;
+  const system = systemSettings.data;
+
+  function updateDraft<K extends keyof AppSettingsValues>(key: K, value: AppSettingsValues[K]) {
+    setSettingsDraft((current) => ({ ...current, [key]: value }));
+  }
 
   return (
     <main className="page">
@@ -434,51 +458,122 @@ export function AdvancedSettingsPage() {
         <section className="settings-section">
           <div className="metadata-heading">
             <HardDrive size={18} aria-hidden="true" />
-            <h2>Import</h2>
+            <h2>Settings serveur</h2>
           </div>
-          <button className="primary-action wide" onClick={() => void handleScan()} disabled={scanBusy}>
-            {scanBusy ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <RefreshCw size={18} aria-hidden="true" />}
-            Scanner incoming
+          <div className="settings-grid">
+            <label>
+              <span>Upload max MB</span>
+              <input
+                type="number"
+                value={settingsDraft.max_upload_size_mb ?? ""}
+                onChange={(event) => updateDraft("max_upload_size_mb", Number(event.target.value))}
+              />
+            </label>
+            <label>
+              <span>Fichiers par batch</span>
+              <input
+                type="number"
+                value={settingsDraft.import_max_files_per_batch ?? ""}
+                onChange={(event) => updateDraft("import_max_files_per_batch", Number(event.target.value))}
+              />
+            </label>
+            <label>
+              <span>Worker</span>
+              <input
+                type="number"
+                value={settingsDraft.import_worker_concurrency ?? ""}
+                onChange={(event) => updateDraft("import_worker_concurrency", Number(event.target.value))}
+              />
+            </label>
+            <label>
+              <span>Corbeille h</span>
+              <input
+                type="number"
+                value={settingsDraft.trash_retention_hours ?? ""}
+                onChange={(event) => updateDraft("trash_retention_hours", Number(event.target.value))}
+              />
+            </label>
+          </div>
+          <div className="settings-toggle-grid">
+            <label className="checkbox-line">
+              <input
+                type="checkbox"
+                checked={Boolean(settingsDraft.metadata_googlebooks_enabled)}
+                onChange={(event) => updateDraft("metadata_googlebooks_enabled", event.target.checked)}
+              />
+              <span>Google Books</span>
+            </label>
+            <label className="checkbox-line">
+              <input
+                type="checkbox"
+                checked={Boolean(settingsDraft.metadata_openlibrary_enabled)}
+                onChange={(event) => updateDraft("metadata_openlibrary_enabled", event.target.checked)}
+              />
+              <span>Open Library</span>
+            </label>
+            <label className="checkbox-line">
+              <input
+                type="checkbox"
+                checked={Boolean(settingsDraft.metadata_auto_enrich_on_import)}
+                onChange={(event) => updateDraft("metadata_auto_enrich_on_import", event.target.checked)}
+              />
+              <span>Auto metadata import</span>
+            </label>
+            <label className="checkbox-line">
+              <input
+                type="checkbox"
+                checked={Boolean(settingsDraft.trash_auto_purge_enabled)}
+                onChange={(event) => updateDraft("trash_auto_purge_enabled", event.target.checked)}
+              />
+              <span>Purge auto</span>
+            </label>
+          </div>
+          <button className="primary-action wide" onClick={() => void handleSaveSettings()} disabled={settingsBusy}>
+            {settingsBusy ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <RefreshCw size={18} aria-hidden="true" />}
+            Sauver settings
           </button>
-          {scanBusy && (
-            <p className="notice pending">
-              <Loader2 className="spin" size={16} aria-hidden="true" />
-              Scan incoming en cours...
+          {settingsMessage && (
+            <p className="notice success">
+              <Check size={16} aria-hidden="true" />
+              {settingsMessage}
             </p>
           )}
-          {scanResult && (
-            <div className="stat-grid">
-              <div>
-                <span>Scannes</span>
-                <strong>{scanResult.scanned}</strong>
-              </div>
-              <div>
-                <span>Importes</span>
-                <strong>{scanResult.imported}</strong>
-              </div>
-              <div>
-                <span>Warnings</span>
-                <strong>{scanResult.warnings}</strong>
-              </div>
-              <div>
-                <span>Failed</span>
-                <strong>{scanResult.failed}</strong>
-              </div>
+          <div className="stat-grid">
+            <div>
+              <span>ENV</span>
+              <strong>{system?.app_env ?? "..."}</strong>
             </div>
-          )}
+            <div>
+              <span>Setup token</span>
+              <strong>{system?.setup_token_configured ? "oui" : "non"}</strong>
+            </div>
+            <div>
+              <span>DB</span>
+              <strong>{system?.database_url_configured ? "config" : "missing"}</strong>
+            </div>
+            <div>
+              <span>Secret</span>
+              <strong>{system?.secret_key_configured ? "config" : "default"}</strong>
+            </div>
+          </div>
+        </section>
+
+        <section className="settings-section">
+          <div className="metadata-heading">
+            <HardDrive size={18} aria-hidden="true" />
+            <h2>File import</h2>
+          </div>
           <div className="maintenance-list">
             {(jobs.data?.items ?? []).map((job) => (
               <div key={job.id} className={`maintenance-row ${job.status}`}>
                 <div>
-                  <strong>{job.filename ?? job.file_path ?? "EPUB"}</strong>
-                  <span>{job.status}</span>
+                  <strong>{job.message ?? "Import EPUB"}</strong>
+                  <span>{job.status} - {Math.round(job.progress_percent)}%</span>
                 </div>
-                {job.error_message && (
-                  <p>
-                    <AlertCircle size={14} aria-hidden="true" />
-                    {job.error_message}
-                  </p>
-                )}
+                <p>
+                  <span>{job.processed_items}/{job.total_items}</span>
+                  <span>{job.success_count} ok, {job.warning_count} warning, {job.failed_count} failed</span>
+                </p>
               </div>
             ))}
             {!jobs.isLoading && (jobs.data?.items.length ?? 0) === 0 && (

@@ -1082,6 +1082,20 @@ button:disabled {
   gap: 10px;
 }
 
+.settings-grid,
+.settings-toggle-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-toggle-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .theme-grid button,
 .settings-link {
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1833,6 +1847,10 @@ button:disabled {
 
   .admin-action-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .settings-toggle-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .admin-toolbar {

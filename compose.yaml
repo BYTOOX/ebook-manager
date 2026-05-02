@@ -25,7 +25,6 @@ services:
       CORS_ORIGINS: http://localhost:3000,http://localhost:5173
     volumes:
       - library_data:/data/library
-      - ./library-import:/data/library/incoming:ro
     ports:
       - "8000:8000"
     depends_on:
