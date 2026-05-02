@@ -70,6 +70,18 @@ button:disabled {
   opacity: 0.55;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .boot-screen,
 .login-screen {
   min-height: 100vh;
@@ -80,30 +92,45 @@ button:disabled {
 }
 
 .boot-screen p {
-  margin: 14px 0 0;
+  margin: 16px 0 0;
   color: var(--color-accent);
   font-weight: 700;
 }
 
-.brand-mark {
-  width: 64px;
-  height: 64px;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--color-line);
-  border-radius: 18px;
-  background: #050505;
-  color: var(--color-accent);
-  box-shadow: var(--shadow-gold);
-  font-weight: 900;
-  font-size: 32px;
+.brand-logo {
+  display: block;
+  object-fit: contain;
+  filter: drop-shadow(0 10px 24px rgba(245, 197, 66, 0.2));
 }
 
-.brand-mark.small {
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
-  font-size: 16px;
+.brand-logo-icon {
+  width: 64px;
+  height: 64px;
+}
+
+.brand-logo-small {
+  width: min(240px, 72vw);
+  height: auto;
+}
+
+.brand-logo-full {
+  width: min(300px, 76vw);
+  height: auto;
+}
+
+.boot-logo {
+  width: min(260px, 78vw);
+}
+
+.login-logo {
+  width: min(250px, 100%);
+  margin: 0 auto 18px;
+}
+
+.empty-logo {
+  width: 84px;
+  height: 84px;
+  margin-bottom: 18px;
 }
 
 .login-panel {
@@ -343,6 +370,12 @@ button:disabled {
 
 .topbar-brand {
   font-weight: 800;
+}
+
+.topbar-logo {
+  width: clamp(118px, 20vw, 160px);
+  max-height: 40px;
+  object-position: left center;
 }
 
 .topbar-status {

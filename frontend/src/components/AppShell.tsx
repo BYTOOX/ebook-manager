@@ -3,6 +3,7 @@ import { NavLink, useLocation } from "react-router-dom";
 import { useSyncState } from "../providers/SyncProvider";
 import { useAuth } from "../providers/AuthProvider";
 import type { ReactNode } from "react";
+import { BrandLogo } from "./BrandLogo";
 
 const navItems = [
   { to: "/", label: "Home", icon: Home },
@@ -23,8 +24,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       {!hideNav && (
         <header className="topbar">
           <NavLink to="/" className="topbar-brand" aria-label="Aurelia home">
-            <span className="brand-mark small">A</span>
-            <span>Aurelia</span>
+            <BrandLogo variant="full" className="topbar-logo" label="Aurelia" />
           </NavLink>
           <div className="topbar-status" title={`Sync: ${state}`}>
             <Sparkles size={15} aria-hidden="true" />

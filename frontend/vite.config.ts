@@ -9,7 +9,14 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["favicon.svg", "aurelia-mark.svg"],
+      includeAssets: [
+        "brand/favicon.png",
+        "brand/aurelia-icon.png",
+        "brand/aurelia-icon-192.png",
+        "brand/aurelia-icon-512.png",
+        "brand/aurelia-logo-full.png",
+        "brand/aurelia-logo-small.png"
+      ],
       manifest: {
         name: "Aurelia",
         short_name: "Aurelia",
@@ -21,9 +28,15 @@ export default defineConfig({
         scope: "/",
         icons: [
           {
-            src: "/aurelia-mark.svg",
-            sizes: "any",
-            type: "image/svg+xml",
+            src: "/brand/aurelia-icon-192.png",
+            sizes: "192x192",
+            type: "image/png",
+            purpose: "any maskable"
+          },
+          {
+            src: "/brand/aurelia-icon-512.png",
+            sizes: "512x512",
+            type: "image/png",
             purpose: "any maskable"
           }
         ]

@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { Lock, LogIn, UserPlus } from "lucide-react";
 import { useAuth } from "../providers/AuthProvider";
+import { BrandLogo } from "../components/BrandLogo";
 
 export function LoginPage() {
   const { login, setup } = useAuth();
@@ -31,8 +32,8 @@ export function LoginPage() {
   return (
     <main className="login-screen">
       <section className="login-panel">
-        <div className="brand-mark">A</div>
-        <h1>Aurelia</h1>
+        <BrandLogo variant="small" className="login-logo" label="Aurelia EPUB Reader" />
+        <h1 className="sr-only">Aurelia</h1>
         <p>Bibliotheque EPUB personnelle.</p>
 
         <div className="segmented" role="tablist" aria-label="Mode auth">
