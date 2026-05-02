@@ -9,6 +9,7 @@ import {
   Moon,
   RefreshCw,
   Settings2,
+  Shield,
   Sparkles,
   Trash2,
   Upload,
@@ -144,6 +145,10 @@ export function SettingsPage() {
         <Link className="settings-link" to="/import">
           <Upload size={19} aria-hidden="true" />
           Import EPUB
+        </Link>
+        <Link className="settings-link" to="/admin/library">
+          <Shield size={19} aria-hidden="true" />
+          Admin bibliotheque
         </Link>
         <Link className="settings-link" to="/settings/advanced">
           <Settings2 size={19} aria-hidden="true" />

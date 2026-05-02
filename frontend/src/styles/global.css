@@ -1094,6 +1094,109 @@ button:disabled {
   padding: 0 14px;
 }
 
+.admin-toolbar,
+.admin-table-wrap {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.admin-toolbar {
+  border-bottom: 1px solid rgba(245, 197, 66, 0.14);
+  padding-bottom: 16px;
+}
+
+.admin-filter-row,
+.admin-action-grid,
+.admin-two-inputs {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-filter-row,
+.admin-two-inputs {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.admin-action-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.admin-action-grid select,
+.admin-action-grid input,
+.admin-filter-row select {
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  padding: 0 12px;
+}
+
+.secondary-action.danger {
+  border-color: rgba(255, 92, 92, 0.28);
+  color: var(--color-error);
+}
+
+.admin-table-wrap {
+  overflow-x: auto;
+}
+
+.admin-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+  overflow: hidden;
+  border: 1px solid rgba(245, 197, 66, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.admin-table th,
+.admin-table td {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.admin-table th {
+  color: var(--color-text-dim);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.admin-table td:first-child,
+.admin-table th:first-child {
+  width: 44px;
+}
+
+.admin-table input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--color-accent);
+}
+
+.admin-table tr.selected {
+  background: rgba(245, 197, 66, 0.08);
+}
+
+.admin-table td strong,
+.admin-table td span {
+  display: block;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-table td span {
+  color: var(--color-text-dim);
+  font-size: 12px;
+}
+
 .book-detail {
   width: min(100%, 880px);
   min-height: 100vh;
@@ -1726,6 +1829,15 @@ button:disabled {
 
   .organization-wide {
     grid-column: span 2;
+  }
+
+  .admin-action-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .admin-toolbar {
+    grid-template-columns: auto minmax(280px, 1fr) auto;
+    align-items: center;
   }
 
   .metadata-provider-search {

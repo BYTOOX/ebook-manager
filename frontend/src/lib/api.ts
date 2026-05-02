@@ -187,6 +187,28 @@ export type BookListResponse = {
   total: number;
 };
 
+export type BookTrashItem = BookListItem & {
+  deleted_at: string;
+  trash_expires_at: string | null;
+  can_purge: boolean;
+};
+
+export type BookTrashResponse = {
+  items: BookTrashItem[];
+  total: number;
+};
+
+export type BulkBookFailure = {
+  book_id: string;
+  detail: string;
+};
+
+export type BulkBookActionResponse = {
+  updated: number;
+  failed: BulkBookFailure[];
+  job_id: string | null;
+};
+
 export type BookSeriesInfo = {
   name: string;
   index: number | null;
@@ -460,6 +482,39 @@ export async function updateBook(bookId: string, payload: BookUpdate) {
   return apiFetch<BookDetail>(`/books/${bookId}`, {
     method: "PATCH",
     body: JSON.stringify(payload)
+  });
+}
+
+export async function bulkBookAction(
+  bookIds: string[],
+  action: string,
+  payload: Record<string, unknown> = {}
+) {
+  return apiFetch<BulkBookActionResponse>("/books/bulk-action", {
+    method: "POST",
+    body: JSON.stringify({ book_ids: bookIds, action, payload })
+  });
+}
+
+export async function listTrashBooks(limit = 200) {
+  return apiFetch<BookTrashResponse>(`/books/trash?limit=${limit}`);
+}
+
+export async function restoreBook(bookId: string) {
+  return apiFetch<BookDetail>(`/books/${bookId}/restore`, {
+    method: "POST"
+  });
+}
+
+export async function deleteBook(bookId: string) {
+  return apiFetch<void>(`/books/${bookId}`, {
+    method: "DELETE"
+  });
+}
+
+export async function purgeBook(bookId: string) {
+  return apiFetch<void>(`/books/${bookId}/purge`, {
+    method: "DELETE"
   });
 }
 

@@ -1,6 +1,7 @@
-import { ArrowDownAZ, ArrowUpAZ, Calendar, Clock, Grid2X2, List, Search, SlidersHorizontal, Star } from "lucide-react";
+import { ArrowDownAZ, ArrowUpAZ, Calendar, Clock, Grid2X2, List, Search, Shield, SlidersHorizontal, Star } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { apiFetch, type BookListResponse, type TagListResponse } from "../lib/api";
 import { BookCard } from "../components/BookCard";
 import { EmptyLibrary } from "../components/EmptyLibrary";
@@ -120,6 +121,9 @@ export function LibraryPage() {
           >
             <SlidersHorizontal size={19} aria-hidden="true" />
           </button>
+          <Link aria-label="Admin bibliotheque" className="icon-button" to="/admin/library">
+            <Shield size={19} aria-hidden="true" />
+          </Link>
         </div>
       </header>
 

@@ -2,28 +2,36 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from datetime import datetime, timezone
+from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import CurrentUser, DbSession
 from app.core.config import get_settings
-from app.models.book import Author, Book, BookAuthor, BookSeries, BookTag, Series, Tag
+from app.models.book import Author, Book, BookAuthor, BookSeries, BookTag, Collection, CollectionBook, Series, Tag
+from app.models.import_job import ImportJob
 from app.models.metadata import MetadataProviderResult
 from app.models.reading import Bookmark, ReadingProgress
 from app.schemas.book import (
     BookmarkListResponse,
     BookmarkOut,
+    BulkBookActionRequest,
+    BulkBookActionResponse,
+    BulkBookFailure,
     BookDetail,
     BookListItem,
     BookListResponse,
     BookSeriesInfo,
+    BookTrashItem,
+    BookTrashResponse,
     BookUpdate,
     ReadingProgressOut,
     ReadingProgressPayload,
@@ -86,6 +94,114 @@ def _get_book_or_404(db: Session, book_id: UUID) -> Book:
     if book is None or book.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
     return book
+
+
+def _get_book_any_state_or_404(db: Session, book_id: UUID) -> Book:
+    book = db.get(Book, book_id)
+    if book is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
+    return book
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _is_purgeable(book: Book, now: datetime | None = None) -> bool:
+    if book.deleted_at is None:
+        return False
+    trash_expires_at = _as_utc(book.trash_expires_at)
+    if trash_expires_at is None:
+        return False
+    return trash_expires_at <= (now or _utc_now())
+
+
+def _trash_book(book: Book) -> None:
+    now = _utc_now()
+    book.deleted_at = now
+    book.trash_expires_at = now + timedelta(hours=24)
+
+
+def _remove_book_files(book: Book) -> None:
+    settings = get_settings()
+    book_dir = Path(book.file_path).parent
+    expected_dir = (settings.LIBRARY_PATH / "books" / str(book.id)).resolve()
+    try:
+        if book_dir.resolve() == expected_dir:
+            shutil.rmtree(book_dir, ignore_errors=True)
+            return
+    except OSError:
+        pass
+
+    for raw_path in [book.file_path, book.cover_path]:
+        if not raw_path:
+            continue
+        try:
+            Path(raw_path).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    try:
+        Path(book.file_path).with_name("metadata.json").unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _purge_book(db: Session, book: Book) -> None:
+    for collection in db.scalars(select(Collection).where(Collection.cover_book_id == book.id)):
+        collection.cover_book_id = None
+        db.add(collection)
+    for import_job in db.scalars(select(ImportJob).where(ImportJob.result_book_id == book.id)):
+        import_job.result_book_id = None
+        db.add(import_job)
+    for metadata_result in db.scalars(
+        select(MetadataProviderResult).where(MetadataProviderResult.book_id == book.id)
+    ):
+        metadata_result.book_id = None
+        db.add(metadata_result)
+
+    db.query(Bookmark).filter(Bookmark.book_id == book.id).delete(synchronize_session=False)
+    db.query(ReadingProgress).filter(ReadingProgress.book_id == book.id).delete(synchronize_session=False)
+    _remove_book_files(book)
+    db.delete(book)
+
+
+def _purge_expired_trash(db: Session) -> int:
+    now = _utc_now()
+    expired = list(
+        db.scalars(
+            select(Book).where(
+                Book.deleted_at.is_not(None),
+                Book.trash_expires_at.is_not(None),
+                Book.trash_expires_at <= now,
+            )
+        )
+    )
+    for book in expired:
+        _purge_book(db, book)
+    if expired:
+        db.commit()
+    return len(expired)
+
+
+def serialize_trash_book(book: Book) -> BookTrashItem:
+    if book.deleted_at is None:
+        raise ValueError("Book is not in trash")
+    item = serialize_book(book)
+    return BookTrashItem(
+        **item.model_dump(),
+        deleted_at=book.deleted_at,
+        trash_expires_at=book.trash_expires_at,
+        can_purge=_is_purgeable(book),
+    )
 
 
 def _metadata_snapshot(book: Book) -> dict[str, object]:
@@ -330,6 +446,88 @@ def _set_book_tags(db: Session, book: Book, tag_names: list[str]) -> None:
         book.book_tags.append(BookTag(tag=tag))
 
 
+def _payload_string_list(payload: dict, key: str) -> list[str]:
+    value = payload.get(key)
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _apply_bulk_action_to_book(
+    db: Session,
+    book: Book,
+    action: str,
+    payload: dict,
+) -> None:
+    if action in {"delete", "trash"}:
+        if book.deleted_at is not None:
+            raise ValueError("Book already in trash")
+        _trash_book(book)
+        return
+
+    if action == "restore":
+        if book.deleted_at is None:
+            raise ValueError("Book is not in trash")
+        book.deleted_at = None
+        book.trash_expires_at = None
+        return
+
+    if action == "purge":
+        if not _is_purgeable(book):
+            raise ValueError("Book is not purgeable yet")
+        _purge_book(db, book)
+        return
+
+    if book.deleted_at is not None:
+        raise ValueError("Book is in trash")
+
+    if action == "set_status":
+        next_status = str(payload.get("status", "")).strip()
+        if next_status not in {"unread", "in_progress", "finished", "abandoned"}:
+            raise ValueError("Invalid status")
+        book.status = next_status
+    elif action == "set_favorite":
+        book.favorite = bool(payload.get("favorite"))
+    elif action == "set_rating":
+        rating = payload.get("rating")
+        book.rating = None if rating in {None, ""} else int(rating)
+        if book.rating is not None and not 0 <= book.rating <= 5:
+            raise ValueError("Invalid rating")
+    elif action == "add_tags":
+        tags = [link.tag.name for link in book.book_tags if link.tag]
+        _set_book_tags(db, book, tags + _payload_string_list(payload, "tags"))
+    elif action == "remove_tags":
+        removed = {tag.casefold() for tag in _payload_string_list(payload, "tags")}
+        tags = [link.tag.name for link in book.book_tags if link.tag and link.tag.name.casefold() not in removed]
+        _set_book_tags(db, book, tags)
+    elif action == "add_to_collection":
+        collection_id = payload.get("collection_id")
+        if not collection_id:
+            raise ValueError("Collection is required")
+        collection = db.get(Collection, UUID(str(collection_id)))
+        if collection is None:
+            raise ValueError("Collection not found")
+        exists = any(link.book_id == book.id for link in collection.collection_books)
+        if not exists:
+            collection.collection_books.append(
+                CollectionBook(book=book, position=len(collection.collection_books))
+            )
+            if collection.cover_book_id is None:
+                collection.cover_book_id = book.id
+    elif action == "set_series":
+        series_index = payload.get("series_index")
+        _set_book_series(
+            db,
+            book,
+            str(payload.get("series_name", "")).strip() or None,
+            None if series_index in {None, ""} else float(series_index),
+        )
+    elif action == "metadata_auto":
+        MetadataEnrichmentService(get_settings()).auto_enrich_book(db, book)
+    else:
+        raise ValueError("Unsupported bulk action")
+
+
 def _book_series_info(book: Book) -> BookSeriesInfo | None:
     if book.book_series and book.book_series.series:
         return BookSeriesInfo(
@@ -361,6 +559,7 @@ def list_books(
     limit: int = Query(default=24, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> BookListResponse:
+    _purge_expired_trash(db)
     order = order.lower()
     if order not in {"asc", "desc"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid order")
@@ -662,6 +861,59 @@ def apply_book_metadata(
     return get_book(book_id, current_user, db)
 
 
+@router.post("/bulk-action", response_model=BulkBookActionResponse)
+def bulk_book_action(
+    payload: BulkBookActionRequest,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> BulkBookActionResponse:
+    del current_user
+    seen: set[UUID] = set()
+    book_ids = [book_id for book_id in payload.book_ids if not (book_id in seen or seen.add(book_id))]
+    failures: list[BulkBookFailure] = []
+    updated = 0
+
+    for book_id in book_ids:
+        book = db.get(Book, book_id)
+        if book is None:
+            failures.append(BulkBookFailure(book_id=book_id, detail="Book not found"))
+            continue
+        try:
+            _apply_bulk_action_to_book(db, book, payload.action, payload.payload)
+            db.commit()
+            updated += 1
+        except Exception as exc:
+            db.rollback()
+            failures.append(BulkBookFailure(book_id=book_id, detail=str(exc)))
+
+    return BulkBookActionResponse(updated=updated, failed=failures)
+
+
+@router.get("/trash", response_model=BookTrashResponse)
+def list_trash(
+    current_user: CurrentUser,
+    db: DbSession,
+    limit: int = Query(default=200, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> BookTrashResponse:
+    del current_user
+    _purge_expired_trash(db)
+    total = db.scalar(
+        select(func.count()).select_from(Book).where(Book.deleted_at.is_not(None))
+    ) or 0
+    books = list(
+        db.scalars(
+            select(Book)
+            .options(selectinload(Book.book_authors).selectinload(BookAuthor.author))
+            .where(Book.deleted_at.is_not(None))
+            .order_by(Book.deleted_at.desc())
+            .limit(limit)
+            .offset(offset)
+        ).unique()
+    )
+    return BookTrashResponse(items=[serialize_trash_book(book) for book in books], total=total)
+
+
 @router.get("/{book_id}", response_model=BookDetail)
 def get_book(book_id: UUID, current_user: CurrentUser, db: DbSession) -> BookDetail:
     book = _get_book_or_404(db, book_id)
@@ -735,3 +987,37 @@ def get_book_cover(book_id: UUID, current_user: CurrentUser, db: DbSession) -> F
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cover not found")
 
     return FileResponse(path, media_type="image/jpeg")
+
+
+@router.delete("/{book_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_book(book_id: UUID, current_user: CurrentUser, db: DbSession) -> Response:
+    del current_user
+    book = _get_book_or_404(db, book_id)
+    _trash_book(book)
+    db.add(book)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{book_id}/restore", response_model=BookDetail)
+def restore_book(book_id: UUID, current_user: CurrentUser, db: DbSession) -> BookDetail:
+    book = _get_book_any_state_or_404(db, book_id)
+    if book.deleted_at is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Book is not in trash")
+    book.deleted_at = None
+    book.trash_expires_at = None
+    db.add(book)
+    db.commit()
+    db.refresh(book)
+    return get_book(book_id, current_user, db)
+
+
+@router.delete("/{book_id}/purge", status_code=status.HTTP_204_NO_CONTENT)
+def purge_book(book_id: UUID, current_user: CurrentUser, db: DbSession) -> Response:
+    del current_user
+    book = _get_book_any_state_or_404(db, book_id)
+    if not _is_purgeable(book):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Book is not purgeable yet")
+    _purge_book(db, book)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

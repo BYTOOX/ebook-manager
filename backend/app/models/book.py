@@ -117,6 +117,7 @@ class Book(Base):
     )
     last_opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    trash_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
 
     book_authors = relationship(
         "BookAuthor", back_populates="book", cascade="all, delete-orphan", order_by="BookAuthor.position"

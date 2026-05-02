@@ -4,6 +4,7 @@ import os
 import shutil
 import uuid
 import zipfile
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from html import escape
 from io import BytesIO
@@ -580,6 +581,108 @@ def test_book_patch_updates_metadata_authors_and_series() -> None:
     assert tagged.status_code == 200
     assert tagged.json()["total"] == 1
     assert tagged.json()["items"][0]["title"] == "Aurelia Metadata"
+
+
+def test_book_trash_restore_and_purge_after_retention() -> None:
+    client = TestClient(app)
+    authenticate_client(client)
+
+    upload = client.post(
+        "/api/v1/books/upload",
+        files={"file": ("trash.epub", make_test_epub("Trash Me", "9780000000651"), "application/epub+zip")},
+    )
+    assert upload.status_code == 201
+    book_id = upload.json()["book_id"]
+
+    with SessionLocal() as db:
+        book = db.get(models.Book, uuid.UUID(book_id))
+        assert book is not None
+        file_path = Path(book.file_path)
+        assert file_path.exists()
+
+    deleted = client.delete(f"/api/v1/books/{book_id}")
+    assert deleted.status_code == 204
+
+    books = client.get("/api/v1/books")
+    assert books.status_code == 200
+    assert books.json()["total"] == 0
+
+    trash = client.get("/api/v1/books/trash")
+    assert trash.status_code == 200
+    trash_payload = trash.json()
+    assert trash_payload["total"] == 1
+    assert trash_payload["items"][0]["id"] == book_id
+    assert trash_payload["items"][0]["can_purge"] is False
+
+    hidden = client.get(f"/api/v1/books/{book_id}")
+    assert hidden.status_code == 404
+
+    restore = client.post(f"/api/v1/books/{book_id}/restore")
+    assert restore.status_code == 200
+    assert restore.json()["title"] == "Trash Me"
+    assert client.get("/api/v1/books").json()["total"] == 1
+
+    assert client.delete(f"/api/v1/books/{book_id}").status_code == 204
+    blocked = client.delete(f"/api/v1/books/{book_id}/purge")
+    assert blocked.status_code == 409
+
+    with SessionLocal() as db:
+        book = db.get(models.Book, uuid.UUID(book_id))
+        assert book is not None
+        book.trash_expires_at = datetime.now(UTC) - timedelta(minutes=1)
+        db.commit()
+
+    purged = client.delete(f"/api/v1/books/{book_id}/purge")
+    assert purged.status_code == 204
+    assert not file_path.exists()
+
+    with SessionLocal() as db:
+        assert db.get(models.Book, uuid.UUID(book_id)) is None
+
+
+def test_book_bulk_actions_update_and_trash_multiple_books() -> None:
+    client = TestClient(app)
+    authenticate_client(client)
+
+    first = client.post(
+        "/api/v1/books/upload",
+        files={"file": ("bulk-one.epub", make_test_epub("Bulk One", "9780000000661"), "application/epub+zip")},
+    )
+    second = client.post(
+        "/api/v1/books/upload",
+        files={"file": ("bulk-two.epub", make_test_epub("Bulk Two", "9780000000662"), "application/epub+zip")},
+    )
+    assert first.status_code == 201
+    assert second.status_code == 201
+    book_ids = [first.json()["book_id"], second.json()["book_id"]]
+
+    status_update = client.post(
+        "/api/v1/books/bulk-action",
+        json={"book_ids": book_ids, "action": "set_status", "payload": {"status": "finished"}},
+    )
+    assert status_update.status_code == 200
+    assert status_update.json() == {"updated": 2, "failed": [], "job_id": None}
+
+    tags_update = client.post(
+        "/api/v1/books/bulk-action",
+        json={"book_ids": book_ids, "action": "add_tags", "payload": {"tags": ["Batch"]}},
+    )
+    assert tags_update.status_code == 200
+    assert tags_update.json()["updated"] == 2
+
+    books = client.get("/api/v1/books?tag=Batch")
+    assert books.status_code == 200
+    assert books.json()["total"] == 2
+    assert {book["status"] for book in books.json()["items"]} == {"finished"}
+
+    trashed = client.post(
+        "/api/v1/books/bulk-action",
+        json={"book_ids": book_ids, "action": "trash", "payload": {}},
+    )
+    assert trashed.status_code == 200
+    assert trashed.json()["updated"] == 2
+    assert client.get("/api/v1/books").json()["total"] == 0
+    assert client.get("/api/v1/books/trash").json()["total"] == 2
 
 
 def test_book_list_rating_sort_keeps_unrated_books_last() -> None:

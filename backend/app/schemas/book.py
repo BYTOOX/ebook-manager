@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class BookListItem(BaseModel):
@@ -23,6 +23,34 @@ class BookListItem(BaseModel):
 class BookListResponse(BaseModel):
     items: list[BookListItem]
     total: int
+
+
+class BookTrashItem(BookListItem):
+    deleted_at: datetime
+    trash_expires_at: datetime | None = None
+    can_purge: bool = False
+
+
+class BookTrashResponse(BaseModel):
+    items: list[BookTrashItem]
+    total: int
+
+
+class BulkBookFailure(BaseModel):
+    book_id: UUID
+    detail: str
+
+
+class BulkBookActionRequest(BaseModel):
+    book_ids: list[UUID] = Field(default_factory=list)
+    action: str
+    payload: dict = Field(default_factory=dict)
+
+
+class BulkBookActionResponse(BaseModel):
+    updated: int
+    failed: list[BulkBookFailure] = Field(default_factory=list)
+    job_id: UUID | None = None
 
 
 class BookSeriesInfo(BaseModel):

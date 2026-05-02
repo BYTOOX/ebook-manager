@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "./components/AppShell";
 import { BootScreen } from "./components/BootScreen";
 import { useAuth } from "./providers/AuthProvider";
+import { AdminLibraryPage } from "./pages/AdminLibraryPage";
 import { BookDetailPage } from "./pages/BookDetailPage";
 import { CollectionsPage } from "./pages/CollectionsPage";
 import { HomePage } from "./pages/HomePage";
@@ -30,6 +31,7 @@ export default function App() {
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/search" element={<SearchPage />} />
         <Route path="/collections" element={<CollectionsPage />} />
+        <Route path="/admin/library" element={<AdminLibraryPage />} />
         <Route path="/books/:bookId" element={<BookDetailPage />} />
         <Route path="/reader/:bookId" element={<ReaderPage />} />
         <Route path="/settings" element={<SettingsPage />} />
