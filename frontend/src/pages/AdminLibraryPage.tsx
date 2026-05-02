@@ -53,6 +53,19 @@ function isTrashBook(book: BookListItem | BookTrashItem): book is BookTrashItem 
   return "deleted_at" in book;
 }
 
+function formatBulkFailure(detail: string) {
+  if (detail === "Book is not purgeable yet") {
+    return "Purge disponible uniquement apres l'echeance indiquee.";
+  }
+  if (detail === "Book is not in trash") {
+    return "Le livre n'est plus dans la corbeille.";
+  }
+  if (detail === "Book already in trash") {
+    return "Le livre est deja dans la corbeille.";
+  }
+  return detail;
+}
+
 export function AdminLibraryPage() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<AdminTab>("library");
@@ -115,18 +128,25 @@ export function AdminLibraryPage() {
 
   const selectedIds = [...selected].filter((id) => rows.some((book) => book.id === id));
   const allVisibleSelected = rows.length > 0 && rows.every((book) => selected.has(book.id));
-  const selectedTrashIds = selectedIds.filter((id) => {
-    const book = rows.find((item) => item.id === id);
-    return book && isTrashBook(book);
-  });
+  const selectedTrashBooks = selectedIds
+    .map((id) => rows.find((item) => item.id === id))
+    .filter((book): book is BookTrashItem => Boolean(book && isTrashBook(book)));
+  const selectedTrashIds = selectedTrashBooks.map((book) => book.id);
+  const selectedPurgeableTrashIds = selectedTrashBooks.filter((book) => book.can_purge).map((book) => book.id);
+  const hasLockedTrashSelection = selectedTrashBooks.some((book) => !book.can_purge);
 
   const actionMutation = useMutation({
     mutationFn: ({ action, payload, ids }: { action: string; payload?: Record<string, unknown>; ids?: string[] }) =>
       bulkBookAction(ids ?? selectedIds, action, payload ?? {}),
     onSuccess: async (result) => {
-      setError(null);
-      setNotice(`${result.updated} livre(s) traite(s), ${result.failed.length} erreur(s).`);
-      setSelected(new Set());
+      const failedMessages = result.failed.map((failure) => formatBulkFailure(failure.detail));
+      setError(
+        failedMessages.length
+          ? `${failedMessages.length} erreur(s): ${failedMessages.slice(0, 3).join(" ")}`
+          : null
+      );
+      setNotice(`${result.updated} livre(s) traite(s).`);
+      setSelected(new Set(result.failed.map((failure) => failure.book_id)));
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["books"] }),
         queryClient.invalidateQueries({ queryKey: ["organization", "tags"] }),
@@ -301,7 +321,12 @@ export function AdminLibraryPage() {
               <ArchiveRestore size={18} aria-hidden="true" />
               Restaurer
             </button>
-            <button className="secondary-action danger" disabled={selectedTrashIds.length === 0 || busy} onClick={() => actionMutation.mutate({ action: "purge", ids: selectedTrashIds })}>
+            <button
+              className="secondary-action danger"
+              disabled={selectedPurgeableTrashIds.length === 0 || hasLockedTrashSelection || busy}
+              title={hasLockedTrashSelection ? "Purge disponible apres l'echeance indiquee" : undefined}
+              onClick={() => actionMutation.mutate({ action: "purge", ids: selectedPurgeableTrashIds })}
+            >
               <Trash2 size={18} aria-hidden="true" />
               Purger
             </button>
@@ -325,6 +350,9 @@ export function AdminLibraryPage() {
             <Loader2 className="spin" size={16} aria-hidden="true" />
             Action en cours...
           </p>
+        )}
+        {tab === "trash" && hasLockedTrashSelection && !busy && (
+          <p className="notice pending">Purge disponible apres l'echeance indiquee.</p>
         )}
         {notice && <p className="notice success">{notice}</p>}
         {error && <p className="notice error">{error}</p>}
