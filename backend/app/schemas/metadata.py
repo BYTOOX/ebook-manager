@@ -22,7 +22,7 @@ MetadataApplyField = Literal[
 
 class MetadataSearchPayload(BaseModel):
     providers: list[MetadataProvider] = Field(
-        default_factory=lambda: ["openlibrary", "googlebooks"]
+        default_factory=lambda: ["googlebooks"]
     )
     query: str | None = None
     isbn: str | None = None

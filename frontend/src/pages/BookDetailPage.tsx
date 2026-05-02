@@ -108,6 +108,17 @@ function versionedCoverUrl(url: string | null, revision: number) {
   return `${url}${separator}ui=${revision}`;
 }
 
+function metadataSearchSuggestion(book: BookDetail) {
+  const seriesName = book.series?.name;
+  const titleHasSeries = Boolean(
+    seriesName && book.title.toLocaleLowerCase().includes(seriesName.toLocaleLowerCase())
+  );
+  const seriesParts = titleHasSeries
+    ? []
+    : [seriesName, book.series?.index ? `Tome ${book.series.index}` : null];
+  return [...seriesParts, book.title, book.authors[0]].filter(Boolean).join(" ");
+}
+
 export function BookDetailPage() {
   const { bookId } = useParams();
   const queryClient = useQueryClient();
@@ -208,7 +219,7 @@ export function BookDetailPage() {
       rating: data.rating?.toString() ?? "",
       favorite: data.favorite
     });
-    setProviderQuery((current) => current || [data.title, data.authors[0]].filter(Boolean).join(" "));
+    setProviderQuery((current) => current || metadataSearchSuggestion(data));
   }, [data]);
 
   async function handleOfflineDownload() {
@@ -289,7 +300,7 @@ export function BookDetailPage() {
     setProviderMessage(null);
     try {
       const response = await searchBookMetadata(data.id, {
-        providers: ["openlibrary", "googlebooks"],
+        providers: ["googlebooks"],
         query: providerQuery.trim() || null,
         isbn: data.isbn
       });
