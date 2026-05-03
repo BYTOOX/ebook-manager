@@ -16,6 +16,7 @@ import ch.bytoox.aureliareader.core.network.CollectionSummaryDto
 import ch.bytoox.aureliareader.core.network.SeriesDetailDto
 import ch.bytoox.aureliareader.core.network.SeriesSummaryDto
 import ch.bytoox.aureliareader.core.network.UserDto
+import ch.bytoox.aureliareader.core.storage.DeviceIdStore
 import ch.bytoox.aureliareader.core.storage.ServerSettingsStore
 import ch.bytoox.aureliareader.core.storage.TokenStore
 import androidx.lifecycle.ViewModel
@@ -39,7 +40,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
 
 enum class DownloadStatus {
     Idle,
@@ -561,7 +561,7 @@ class AppViewModel(
                 )
             }
 
-            val progressPayload = finishedProgressPayload()
+            val progressPayload = progressRepository.finishedProgressPayload()
             val result = runCatching {
                 progressRepository.saveProgress(
                     bookId = bookId,
@@ -1354,16 +1354,6 @@ class AppViewModel(
         }
     }
 
-    private fun finishedProgressPayload(): String {
-        return JSONObject()
-            .put("progress_percent", 100f)
-            .put("chapter_label", "Termine")
-            .put("location_json", JSONObject())
-            .put("client_updated_at", Instant.now().toString())
-            .put("device_id", "android-reader")
-            .toString()
-    }
-
     private fun handleApiFailure(error: Throwable) {
         if (error is ApiException && error.statusCode == 401) {
             viewModelScope.launch {
@@ -1409,7 +1399,8 @@ class AppViewModel(
             )
             val progressRepository = ProgressRepository(
                 progressDao = database.progressDao(),
-                syncEventDao = database.syncEventDao()
+                syncEventDao = database.syncEventDao(),
+                deviceIdStore = DeviceIdStore(appContext)
             )
 
             return object : ViewModelProvider.Factory {

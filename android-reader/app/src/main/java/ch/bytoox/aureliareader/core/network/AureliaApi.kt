@@ -7,17 +7,20 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MultipartBody
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONArray
 import org.json.JSONObject
 
 class AureliaApi(
     private val httpClient: OkHttpClient,
+    private val assetHttpClient: OkHttpClient,
     private val baseApiUrl: String
 ) {
+    private val baseHttpUrl = baseApiUrl.toHttpUrl()
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
     suspend fun health(): HealthResponse = withContext(Dispatchers.IO) {
@@ -201,19 +204,19 @@ class AureliaApi(
     }
 
     suspend fun downloadCover(coverUrl: String?, targetFile: File): Boolean = withContext(Dispatchers.IO) {
-        val resolvedUrl = coverUrl?.trim().orEmpty()
-        if (resolvedUrl.isBlank()) {
-            return@withContext false
-        }
+        val resolvedUrl = absoluteUrl(coverUrl) ?: return@withContext false
+        val coverHttpUrl = runCatching { resolvedUrl.toHttpUrl() }.getOrNull() ?: return@withContext false
+        val client = if (coverHttpUrl.isAureliaOrigin()) httpClient else assetHttpClient
 
         runCatching {
             executeFile(
                 request = Request.Builder()
-                    .url(resolvedUrl)
+                    .url(coverHttpUrl)
                     .get()
                     .build(),
                 targetFile = targetFile,
-                onProgress = {}
+                onProgress = {},
+                client = client
             )
             targetFile.exists() && targetFile.length() > 0L
         }.getOrDefault(false)
@@ -283,6 +286,12 @@ class AureliaApi(
 
     private fun url(path: String): String = baseApiUrl + path.trimStart('/')
 
+    private fun HttpUrl.isAureliaOrigin(): Boolean {
+        return scheme == baseHttpUrl.scheme &&
+            host == baseHttpUrl.host &&
+            port == baseHttpUrl.port
+    }
+
     private fun absoluteUrl(pathOrUrl: String?): String? {
         val value = pathOrUrl?.trim().orEmpty()
         if (value.isBlank()) {
@@ -315,7 +324,8 @@ class AureliaApi(
     private fun executeFile(
         request: Request,
         targetFile: File,
-        onProgress: (Int) -> Unit
+        onProgress: (Int) -> Unit,
+        client: OkHttpClient = httpClient
     ): Long {
         targetFile.parentFile?.mkdirs()
         val tempFile = File(targetFile.parentFile, "${targetFile.name}.part")
@@ -324,7 +334,7 @@ class AureliaApi(
         }
 
         try {
-            httpClient.newCall(request).execute().use { response ->
+            client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     val responseBody = response.body?.string().orEmpty()
                     throw ApiException(

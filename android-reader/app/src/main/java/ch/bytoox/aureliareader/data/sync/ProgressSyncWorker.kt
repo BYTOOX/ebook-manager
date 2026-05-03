@@ -6,6 +6,7 @@ import androidx.work.WorkerParameters
 import ch.bytoox.aureliareader.core.network.ApiClient
 import ch.bytoox.aureliareader.core.network.ApiException
 import ch.bytoox.aureliareader.core.network.AuthSession
+import ch.bytoox.aureliareader.core.storage.DeviceIdStore
 import ch.bytoox.aureliareader.core.storage.ServerSettingsStore
 import ch.bytoox.aureliareader.core.storage.TokenStore
 import ch.bytoox.aureliareader.data.local.AppDatabaseProvider
@@ -31,7 +32,8 @@ class ProgressSyncWorker(
         val repository = ProgressSyncRepository(
             apiClient = ApiClient(authSession),
             progressDao = database.progressDao(),
-            syncEventDao = database.syncEventDao()
+            syncEventDao = database.syncEventDao(),
+            deviceIdStore = DeviceIdStore(context)
         )
 
         return try {

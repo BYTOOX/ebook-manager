@@ -5,6 +5,7 @@ import ch.bytoox.aureliareader.core.network.ApiException
 import ch.bytoox.aureliareader.core.network.ReadingProgressDto
 import ch.bytoox.aureliareader.core.network.SyncEventResultDto
 import ch.bytoox.aureliareader.core.network.SyncEventUploadDto
+import ch.bytoox.aureliareader.core.storage.DeviceIdStore
 import ch.bytoox.aureliareader.data.local.dao.ProgressDao
 import ch.bytoox.aureliareader.data.local.dao.SyncEventDao
 import ch.bytoox.aureliareader.data.local.entities.SyncEventEntity
@@ -21,9 +22,10 @@ data class ProgressSyncSummary(
 class ProgressSyncRepository(
     private val apiClient: ApiClient,
     private val progressDao: ProgressDao,
-    private val syncEventDao: SyncEventDao
+    private val syncEventDao: SyncEventDao,
+    private val deviceIdStore: DeviceIdStore
 ) {
-    private val progressRepository = ProgressRepository(progressDao, syncEventDao)
+    private val progressRepository = ProgressRepository(progressDao, syncEventDao, deviceIdStore)
 
     suspend fun flushPending(serverUrl: String): ProgressSyncSummary {
         val events = syncEventDao.pending(limit = MAX_BATCH_SIZE)
@@ -66,8 +68,9 @@ class ProgressSyncRepository(
         events: List<SyncEventEntity>
     ): ProgressSyncSummary {
         return try {
+            val deviceId = deviceIdStore.getOrCreateDeviceId()
             val response = api.syncEvents(
-                deviceId = DEVICE_ID,
+                deviceId = deviceId,
                 events = events.map { event ->
                     SyncEventUploadDto(
                         eventId = event.eventId,
@@ -176,7 +179,6 @@ class ProgressSyncRepository(
     }
 
     private companion object {
-        const val DEVICE_ID = "android-reader"
         const val MAX_BATCH_SIZE = 25
     }
 }

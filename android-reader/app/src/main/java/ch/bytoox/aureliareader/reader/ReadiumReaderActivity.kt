@@ -76,6 +76,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.FragmentFactory
 import androidx.fragment.app.commitNow
 import androidx.lifecycle.lifecycleScope
+import ch.bytoox.aureliareader.core.storage.DeviceIdStore
 import ch.bytoox.aureliareader.data.local.AppDatabaseProvider
 import ch.bytoox.aureliareader.data.repositories.ProgressRepository
 import ch.bytoox.aureliareader.data.sync.ProgressSyncScheduler
@@ -116,7 +117,8 @@ class ReadiumReaderActivity : FragmentActivity() {
         val database = AppDatabaseProvider.get(applicationContext)
         progressRepository = ProgressRepository(
             progressDao = database.progressDao(),
-            syncEventDao = database.syncEventDao()
+            syncEventDao = database.syncEventDao(),
+            deviceIdStore = DeviceIdStore(applicationContext)
         )
         val title = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "Lecture" }
         val filePath = intent.getStringExtra(EXTRA_FILE_PATH).orEmpty()

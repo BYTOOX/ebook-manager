@@ -19,7 +19,7 @@ import ch.bytoox.aureliareader.data.local.entities.SyncEventEntity
         SyncEventEntity::class
     ],
     version = 3,
-    exportSchema = false
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun bookDao(): BookDao

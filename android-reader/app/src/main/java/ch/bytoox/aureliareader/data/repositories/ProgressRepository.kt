@@ -1,5 +1,6 @@
 package ch.bytoox.aureliareader.data.repositories
 
+import ch.bytoox.aureliareader.core.storage.DeviceIdStore
 import ch.bytoox.aureliareader.data.local.dao.SyncEventDao
 import ch.bytoox.aureliareader.data.local.dao.ProgressDao
 import ch.bytoox.aureliareader.data.local.entities.ProgressEntity
@@ -20,7 +21,8 @@ data class BookProgressSnapshot(
 
 class ProgressRepository(
     private val progressDao: ProgressDao,
-    private val syncEventDao: SyncEventDao
+    private val syncEventDao: SyncEventDao,
+    private val deviceIdStore: DeviceIdStore
 ) {
     suspend fun allProgress(): Map<String, BookProgressSnapshot> {
         return progressDao.all().associate { entity ->
@@ -42,6 +44,7 @@ class ProgressRepository(
         val currentProgress = progressDao.progressByBookId(bookId)
         val currentEvent = syncEventDao.eventForBook(bookId)
         val normalizedProgress = progressPercent.normalizedProgress()
+        val deviceId = deviceIdStore.getOrCreateDeviceId()
 
         progressDao.upsert(
             ProgressEntity(
@@ -66,7 +69,8 @@ class ProgressRepository(
                     locatorJson = locatorJson,
                     progressPercent = normalizedProgress,
                     chapterLabel = chapterLabel,
-                    updatedAt = now
+                    updatedAt = now,
+                    deviceId = deviceId
                 ),
                 clientCreatedAt = currentEvent?.clientCreatedAt ?: now,
                 updatedAt = now,
@@ -124,7 +128,8 @@ class ProgressRepository(
         locatorJson: String,
         progressPercent: Float,
         chapterLabel: String?,
-        updatedAt: Long
+        updatedAt: Long,
+        deviceId: String
     ): String {
         val locator = runCatching { JSONObject(locatorJson) }.getOrDefault(JSONObject())
         val locations = locator.optJSONObject("locations")
@@ -139,7 +144,7 @@ class ProgressRepository(
             .putNullable("chapter_href", chapterHref)
             .put("location_json", locator)
             .put("client_updated_at", Instant.ofEpochMilli(updatedAt).toString())
-            .put("device_id", DEVICE_ID)
+            .put("device_id", deviceId)
             .toString()
     }
 
@@ -152,7 +157,13 @@ class ProgressRepository(
         return if (progress >= 99f) 100f else progress
     }
 
-    private companion object {
-        const val DEVICE_ID = "android-reader"
+    suspend fun finishedProgressPayload(): String {
+        return JSONObject()
+            .put("progress_percent", 100f)
+            .put("chapter_label", "Termine")
+            .put("location_json", JSONObject())
+            .put("client_updated_at", Instant.now().toString())
+            .put("device_id", deviceIdStore.getOrCreateDeviceId())
+            .toString()
     }
 }
