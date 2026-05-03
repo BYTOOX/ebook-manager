@@ -1,23 +1,16 @@
-name: Android Reader APK
+name: Android Reader Release
 
 on:
-  workflow_dispatch:
-    inputs:
-      release_tag:
-        description: "Optional release tag to create or update, for example android-reader-v1.0.0"
-        required: false
-        type: string
   push:
     tags:
+      - "v*"
       - "android-reader-v*"
-
-permissions:
-  contents: write
+  workflow_dispatch:
 
 jobs:
-  build-apk:
-    name: Build Android reader APK
+  release:
     runs-on: ubuntu-latest
+
     defaults:
       run:
         working-directory: android-reader
@@ -26,41 +19,43 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Java
+      - name: Set up JDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
           cache: gradle
 
-      - name: Build debug APK
-        run: |
-          chmod +x ./gradlew
-          ./gradlew assembleDebug
+      - name: Make Gradle executable
+        run: chmod +x ./gradlew
 
-      - name: Prepare APK asset
-        run: |
-          mkdir -p ../release
-          cp app/build/outputs/apk/debug/app-debug.apk ../release/AureliaReader-debug.apk
+      - name: Restore release keystore
+        if: ${{ secrets.AURELIA_KEYSTORE_BASE64 != '' }}
+        run: echo "${{ secrets.AURELIA_KEYSTORE_BASE64 }}" | base64 -d > aurelia-release.jks
 
-      - name: Upload workflow artifact
+      - name: Build unsigned release artifacts
+        if: ${{ secrets.AURELIA_KEYSTORE_BASE64 == '' }}
+        run: ./gradlew :app:assembleRelease :app:bundleRelease --stacktrace
+
+      - name: Build signed release artifacts
+        if: ${{ secrets.AURELIA_KEYSTORE_BASE64 != '' }}
+        env:
+          AURELIA_KEYSTORE_PATH: ${{ github.workspace }}/android-reader/aurelia-release.jks
+          AURELIA_KEYSTORE_PASSWORD: ${{ secrets.AURELIA_KEYSTORE_PASSWORD }}
+          AURELIA_KEY_ALIAS: ${{ secrets.AURELIA_KEY_ALIAS }}
+          AURELIA_KEY_PASSWORD: ${{ secrets.AURELIA_KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease :app:bundleRelease --stacktrace
+
+      - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
-          name: AureliaReader-debug-apk
-          path: release/AureliaReader-debug.apk
+          name: aurelia-reader-release-apk
+          path: android-reader/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
-      - name: Publish GitHub Release asset
-        if: ${{ github.ref_type == 'tag' || inputs.release_tag != '' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.release_tag }}
-        run: |
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" ../release/AureliaReader-debug.apk --clobber
-          else
-            gh release create "$RELEASE_TAG" ../release/AureliaReader-debug.apk \
-              --target "$GITHUB_SHA" \
-              --title "Aurelia Reader $RELEASE_TAG" \
-              --notes "Debug APK generated from the Android reader workflow."
-          fi
+      - name: Upload release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: aurelia-reader-release-aab
+          path: android-reader/app/build/outputs/bundle/release/*.aab
+          if-no-files-found: error

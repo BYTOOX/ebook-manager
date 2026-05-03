@@ -1,0 +1,52 @@
+name: Android Reader CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "android-reader/**"
+      - ".github/workflows/android-reader-ci.yml"
+  pull_request:
+    paths:
+      - "android-reader/**"
+      - ".github/workflows/android-reader-ci.yml"
+  workflow_dispatch:
+
+jobs:
+  android-reader:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: android-reader
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Make Gradle executable
+        run: chmod +x ./gradlew
+
+      - name: Assemble debug
+        run: ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Unit tests
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
+
+      - name: Lint
+        run: ./gradlew :app:lint --stacktrace
+
+      - name: Upload debug APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aurelia-reader-debug-apk
+          path: android-reader/app/build/outputs/apk/debug/*.apk
